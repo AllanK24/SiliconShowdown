@@ -1,4 +1,5 @@
 import os
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 import json
 import torch
 import time
@@ -101,7 +102,7 @@ def benchmark_model_on_prompt_mps(model, tokenizer, prompt, dtype, num_runs=3):
 
             # Decode output only once
             if i == 0:
-                actual_output_ids = outputs[0][inputs.input_ids.shape[1]:]
+                actual_output_ids = outputs.sequences[0][inputs.input_ids.shape[1]:]
                 generated_text = tokenizer.decode(actual_output_ids, skip_special_tokens=True)
                 output_tokens = len(actual_output_ids)
 
