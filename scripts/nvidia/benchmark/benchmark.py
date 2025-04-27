@@ -2,7 +2,6 @@ import os
 import json
 import torch
 import time
-import psutil
 import statistics # For standard deviation
 try:
     import pynvml
@@ -42,12 +41,10 @@ prompt_list = [
 NUM_TIMED_RUNS_PER_PROMPT = 3 # Number of repetitions for timing
 
 # ---------- Generation Config ----------
-MAX_NEW_TOKENS = 128
-# Define base config - ensure pad_token_id is set correctly later if needed
+MAX_NEW_TOKENS = 512
 generation_config = GenerationConfig(
     max_new_tokens=MAX_NEW_TOKENS,
     do_sample=False,
-    # pad_token_id=tokenizer.eos_token_id, # Set later after tokenizer loaded
 )
 BATCH_SIZE = 1 # Fixed batch size
 
@@ -160,7 +157,6 @@ def run_full_benchmark_cuda(output_filename="benchmark_results_cuda.json"):
     print(f"--- Running CUDA Benchmark with dtype: {benchmark_dtype}, Batch Size: {BATCH_SIZE} ---")
 
     # --- HF Login ---
-    # ... (same login logic as before) ...
     try:
         token = os.environ.get("HF_TOKEN")
         if token: login(token=token); print("Logged in.")
@@ -177,16 +173,9 @@ def run_full_benchmark_cuda(output_filename="benchmark_results_cuda.json"):
             # --- Load Model & Tokenizer ---
             print(f"Loading tokenizer {model_id}...")
             tokenizer = AutoTokenizer.from_pretrained(model_id, use_fast=True)
-            if tokenizer.pad_token is None:
-                 print("Warning: Tokenizer missing pad token, setting to eos_token.")
-                 tokenizer.pad_token = tokenizer.eos_token
-                 # Update generation config *instance* for this model if needed
-                 current_generation_config = GenerationConfig(
-                     **generation_config.to_dict(), # Start with base config
-                     pad_token_id = tokenizer.eos_token_id
-                 )
-            else:
-                 current_generation_config = generation_config # Use base config
+
+            # If needed, set padding token in current_generation_config, however, this is not always necessary
+            current_generation_config = generation_config
 
             print(f"Loading model {model_id} (dtype: {benchmark_dtype})...")
             load_start = time.time()
@@ -225,7 +214,7 @@ def run_full_benchmark_cuda(output_filename="benchmark_results_cuda.json"):
                 # Pass the potentially model-specific generation config
                 prompt_metrics = benchmark_model_on_prompt_cuda(
                     model, tokenizer, prompt_text, current_generation_config,
-                    benchmark_dtype, num_runs=NUM_TIMED_RUNS_PER_PROMPT
+                    num_runs=NUM_TIMED_RUNS_PER_PROMPT
                 )
 
                 # Combine model parameters with prompt metrics for final record
