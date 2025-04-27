@@ -26,7 +26,7 @@ def create_and_activate_virtualenv(env_name="ai_benchmark_env"):
         sys.exit(1)
     
     print(f"Using venv Python: {venv_python}")
-    return venv_pip
+    return venv_python, venv_pip
 
 def install_requirements(venv_pip, requirements_file="requirements.txt"):
     # Install requirements
