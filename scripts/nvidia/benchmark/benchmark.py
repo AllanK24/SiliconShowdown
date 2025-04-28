@@ -17,9 +17,9 @@ from transformers import AutoTokenizer, AutoModelForCausalLM, GenerationConfig
 
 # ---------- Model List (LLM Only) ----------
 model_list = [
-    'google/gemma-1.1-2b-it',
-    'Qwen/Qwen1.5-1.8B-Chat',
-    'meta-llama/Meta-Llama-3.1-8B-Instruct',
+    "Qwen/Qwen2.5-1.5B-Instruct",
+    'google/gemma-3-1b-it',
+    'meta-llama/Llama-3.2-1B-Instruct',
 ]
 
 # ---------- Warm-up Prompts ----------
