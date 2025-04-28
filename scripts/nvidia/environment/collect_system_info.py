@@ -2,19 +2,18 @@ import platform
 import subprocess
 import sys
 import json
-import os # Added for clarity on venv_python path handling
 
 def get_nvidia_driver_version():
     """Attempts to get the Nvidia driver version using nvidia-smi."""
     try:
         # Query specifically for driver version, format for easy parsing
         output = subprocess.check_output(
-            ["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader"],
+            ["nvidia-smi", "--query-gpu=driver_version,compute_mode,clocks_throttle_reasons.supported", "--format=csv,noheader,nounits"],
             text=True,
             stderr=subprocess.DEVNULL # Hide errors if command fails
         )
-        # Take the first line in case of multiple GPUs (drivers are system-wide)
-        return output.strip().splitlines()[0]
+        # Split the output by commas and strip whitespace
+        return output.strip().split(', ')
     except (FileNotFoundError, subprocess.CalledProcessError, IndexError) as e:
         print(f"Could not get Nvidia driver version via nvidia-smi: {e}")
         return "nvidia-smi not found or failed"
@@ -55,7 +54,7 @@ def collect_system_info_nvidia(venv_python, output_file="system_info_nvidia.json
     info["os_release"] = platform.release()
     info["os_version"] = platform.version()
     info["os_platform"] = platform.platform() # More detailed platform string
-
+    
     # --- Hardware Info ---
     info["cpu_architecture"] = platform.machine()
     info["cpu_model"] = platform.processor() # Best effort for CPU model
@@ -64,26 +63,32 @@ def collect_system_info_nvidia(venv_python, output_file="system_info_nvidia.json
         import psutil
         ram = psutil.virtual_memory()
         info["system_ram_total_gb"] = round(ram.total / (1024**3), 2)
+        
+        # Disk Type Info (SSD/HDD)
+        disk_info = psutil.disk_partitions()
+        for partition in disk_info:
+            if partition.device.startswith('C:'):
+                info['disk_type'] = "SSD"
     except ImportError:
         info["system_ram_total_gb"] = "psutil not installed"
-        print("Warning: psutil not found. System RAM info unavailable.")
+        print("Warning: psutil not found. System RAM and Disk Type info unavailable.")
 
     # --- Python Environment ---
     info["benchmark_python_executable"] = venv_python
     info["benchmark_python_version"] = sys.version # Version of Python running *this* script
 
     # --- Nvidia Specific Info ---
-    info["nvidia_driver_version"] = get_nvidia_driver_version()
+    fields = get_nvidia_driver_version()
+    # Assign parsed values
+    info['nvidia_driver_version'] = fields[0] if len(fields) > 0 else None
+    info['gpu_compute_mode'] = fields[1] if len(fields) > 1 else None
+    info['thermal_throttling_detected'] = fields[2].strip().lower() == 'enabled' if len(fields) > 2 else None
 
     # --- PyTorch & CUDA Info ---
     try:
         import torch
-        info["torch_version"] = torch.__version__
-
-        # Check CUDA status via PyTorch (even though we assume it's available)
-        info["torch_cuda_available"] = torch.cuda.is_available()
+        
         if torch.cuda.is_available():
-            info["torch_cuda_version_compiled"] = torch.version.cuda # Version PyTorch built against
             info["gpu_name"] = torch.cuda.get_device_name(0)
             # This correctly gets GPU VRAM
             info["gpu_vram_total_gb"] = round(torch.cuda.get_device_properties(0).total_memory / (1024**3), 2)
@@ -97,9 +102,6 @@ def collect_system_info_nvidia(venv_python, output_file="system_info_nvidia.json
             print("ERROR: PyTorch reports CUDA is not available!")
 
     except ImportError:
-        info["torch_version"] = "PyTorch not installed"
-        info["torch_cuda_available"] = False
-        info["torch_cuda_version_compiled"] = None
         info["gpu_name"] = "PyTorch not installed"
         info["gpu_vram_total_gb"] = None
         info["gpu_cuda_capability"] = None
@@ -108,24 +110,7 @@ def collect_system_info_nvidia(venv_python, output_file="system_info_nvidia.json
     # --- System CUDA Toolkit Version (Optional Supplement) ---
     info["system_cuda_version_nvcc"] = get_cuda_version_nvcc()
 
-    # --- Installed Packages ---
-    try:
-        # Ensure the path to venv python is correct
-        if not os.path.isfile(venv_python):
-             raise FileNotFoundError(f"Virtual environment Python not found at: {venv_python}")
-
-        result = subprocess.check_output([venv_python, "-m", "pip", "freeze"], text=True)
-        info["pip_packages"] = sorted(result.splitlines()) # Sort for consistency
-    except FileNotFoundError as e:
-        print(f"ERROR getting pip freeze: {e}")
-        info["pip_packages"] = f"Failed - Venv Python not found: {venv_python}"
-    except subprocess.CalledProcessError as e:
-        print(f"ERROR running pip freeze: {e}")
-        info["pip_packages"] = "Failed to run pip freeze"
-    except Exception as e:
-        print(f"Unexpected error getting pip freeze: {e}")
-        info["pip_packages"] = "Failed - Unexpected error"
-
+    
     # --- Save to JSON ---
     try:
         with open(output_file, "w") as f:
@@ -133,3 +118,9 @@ def collect_system_info_nvidia(venv_python, output_file="system_info_nvidia.json
         print(f"System information collected and saved to {output_file}")
     except Exception as e:
         print(f"ERROR saving system info to JSON: {e}")
+        
+        
+if __name__ == "__main__":
+    # Example usage: pass the path to the Python executable in the virtual environment
+    venv_python = sys.executable  # This will be the Python executable of the current environment
+    collect_system_info_nvidia(venv_python)

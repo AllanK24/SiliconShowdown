@@ -2,9 +2,13 @@
 
 * Replace os.environ.get("HF_TOKEN"), set up the token directly, otherwise import of models won't work
 
-* TensorRT LLM should preprocess the model on the GPU that will be used for deployment
-
 ------ Questions ------
-1. How to use TensorRT-LLM preprocessed LLM for inference?
-2. How to use TensorRT-LLM on Windows?
-3. How to install TensorRT-LLM?
+1. Temperature and hyperparams of LLM generation process
+2. TTFT
+3. Acceleration: CoreML and Nvidia for Windows
+4. CUDA install exe on Majd's laptop
+5. Match benchmark functions
+6. Apple Memory issues fix
+7. Apple system info (json + python loc + version)
+8. Come up with requirements file
+9. Remove redundant records from benchmark.py

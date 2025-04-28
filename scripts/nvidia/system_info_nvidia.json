@@ -1,0 +1,19 @@
+{
+    "benchmark_python_executable": "c:\\Users\\AllanK\\Desktop\\Courses\\IV Semester\\Statistics\\Silicon Showdown\\scripts\\nvidia\\.venv\\Scripts\\python.exe",
+    "benchmark_python_version": "3.11.9 (tags/v3.11.9:de54cf5, Apr  2 2024, 10:12:12) [MSC v.1938 64 bit (AMD64)]",
+    "cpu_architecture": "AMD64",
+    "cpu_model": "AMD64 Family 25 Model 68 Stepping 1, AuthenticAMD",
+    "disk_type": "SSD",
+    "gpu_compute_mode": "Default",
+    "gpu_cuda_capability": "8.6",
+    "gpu_name": "NVIDIA GeForce RTX 3050 Laptop GPU",
+    "gpu_vram_total_gb": 4.0,
+    "nvidia_driver_version": "566.07",
+    "os_platform": "Windows-10-10.0.26100-SP0",
+    "os_release": "10",
+    "os_system": "Windows",
+    "os_version": "10.0.26100",
+    "system_cuda_version_nvcc": "Cuda compilation tools, release 12.6, V12.6.68",
+    "system_ram_total_gb": 15.26,
+    "thermal_throttling_detected": false
+}
