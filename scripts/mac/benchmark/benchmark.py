@@ -1,11 +1,21 @@
 import os
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 import json
 import torch
-import time # For overall timing
-# pip install psutil nvidia-ml-py3
-
+import time
 from huggingface_hub import login
 from transformers import AutoTokenizer, AutoModelForCausalLM, GenerationConfig
+import psutil
+import subprocess
+
+def get_temperature():
+    try:
+        output = subprocess.check_output(["osx-cpu-temp"], text=True)
+        temp_value = float(output.strip().replace("°C", ""))
+        return temp_value
+    except Exception as e:
+        print(f"Failed to get temperature: {e}")
+        return None
 
 # ---------- Model List ----------
 model_list = [
@@ -49,48 +59,80 @@ def benchmark_model_on_prompt_mps(model, tokenizer, prompt, dtype, num_runs=3):
         inputs = tokenizer(prompt, return_tensors="pt").to(device)
         input_tokens = inputs.input_ids.shape[1]
 
-        # --- Timed Runs ---
+        process = psutil.Process(os.getpid())
+        peak_mem_mb = 0  # Track peak across runs
         times_ms = []
+        ttft_ms_list = []
+
+        wall_time_start = time.time()  # Start full wall clock timer
+
         output_tokens = 0
         generated_text = ""
 
         for i in range(num_runs):
-            start_time = time.time()
+            mem_before_mb = process.memory_full_info().rss / (1024 * 1024)  # Memory before generation
 
+            temp_before = get_temperature()
+
+            start_time = time.time()
             with torch.no_grad():
-                outputs = model.generate(**inputs, generation_config=generation_config)
+                outputs = model.generate(
+                    **inputs,
+                    generation_config=generation_config,
+                    return_dict_in_generate=True,
+                    output_scores=True,
+                )
+            first_token_time = time.time()
+
+            temp_after = get_temperature()
 
             end_time = time.time()
+
             iter_time_ms = (end_time - start_time) * 1000
+            current_ttft_ms = (first_token_time - start_time) * 1000
+            mem_after_mb = process.memory_full_info().rss / (1024 * 1024)
+            memory_delta_mb = mem_after_mb - mem_before_mb
+
+            current_peak = max(mem_before_mb, mem_after_mb)
+            if current_peak > peak_mem_mb:
+                peak_mem_mb = current_peak
+
             times_ms.append(iter_time_ms)
+            ttft_ms_list.append(current_ttft_ms)
 
             # Decode output only once
             if i == 0:
-                 # Decode only new tokens - check indexing carefully
-                 # Some models might repeat input tokens, some might not in outputs
-                 # A safer way might be len(outputs[0]) - len(inputs.input_ids[0])
-                 actual_output_ids = outputs[0][inputs.input_ids.shape[1]:]
-                 generated_text = tokenizer.decode(actual_output_ids, skip_special_tokens=True)
-                 output_tokens = len(actual_output_ids)
+                actual_output_ids = outputs.sequences[0][inputs.input_ids.shape[1]:]
+                generated_text = tokenizer.decode(actual_output_ids, skip_special_tokens=True)
+                output_tokens = len(actual_output_ids)
 
-        # Peak memory measurement is not straightforward on MPS; omit or use allocated memory if desired
-        peak_memory_mb = None
+        wall_time_end = time.time()
+        full_wall_time_s = wall_time_end - wall_time_start
 
         # --- Aggregate Results ---
-        avg_time_ms = sum(times_ms) / len(times_ms) if times_ms else 0
-        tokens_per_sec = (output_tokens / (avg_time_ms / 1000.0)) if avg_time_ms > 0 else 0
+        avg_time_ms = round(sum(times_ms) / len(times_ms), 3) if times_ms else 0
+        tokens_per_sec = round((output_tokens / (sum(times_ms) / len(times_ms) / 1000.0)), 2) if times_ms else 0
+        ttft_ms_avg = round(sum(ttft_ms_list) / len(ttft_ms_list), 2) if ttft_ms_list else None
 
         results = {
             "prompt": prompt,
             "status": "success",
             "error_message": None,
             "input_tokens": input_tokens,
-            "output_tokens": output_tokens, # Actual generated tokens
-            "avg_time_ms": round(avg_time_ms, 3),
-            "tokens_per_sec": round(tokens_per_sec, 2),
+            "output_tokens": output_tokens,
+            "avg_time_ms": avg_time_ms,
+            "tokens_per_sec": tokens_per_sec,
             "runs_time_ms": [round(t, 3) for t in times_ms],
-            "peak_memory_mb": peak_memory_mb,
-            "output_text_preview": generated_text[:100] + "..."
+            "ttft_ms_avg": ttft_ms_avg,
+            "memory_before_mb": round(mem_before_mb, 2),
+            "memory_after_mb": round(mem_after_mb, 2),
+            "memory_delta_mb": round(memory_delta_mb, 2),
+            "peak_memory_mb": round(peak_mem_mb, 2),
+            "full_wall_time_s": round(full_wall_time_s, 3),
+            "output_text_preview": generated_text[:100] + "...",
+            "temp_before_c": round(temp_before, 1) if temp_before else None,
+            "temp_after_c": round(temp_after, 1) if temp_after else None,
+            "temp_delta_c": round((temp_after - temp_before), 1) if temp_before and temp_after else None,
         }
 
     except Exception as e:
