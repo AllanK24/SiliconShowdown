@@ -5,10 +5,11 @@
 ------ Questions ------
 1. Temperature and hyperparams of LLM generation process
 2. TTFT
-3. Acceleration: CoreML and Nvidia for Windows
-4. CUDA install exe on Majd's laptop
+3. Acceleration: CoreML and Nvidia for Windows (https://github.com/sgl-project/sglang, https://github.com/vllm-project/vllm)
+4. Change CUDA download script, set up the .exe to install via command line code
 5. Match benchmark functions
 6. Apple Memory issues fix
 7. Apple system info (json + python loc + version)
 8. Come up with requirements file
 9. Remove redundant records from benchmark.py
+10. Come up with a script to install any python version if python doesn't exist
