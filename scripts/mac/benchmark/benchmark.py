@@ -3,18 +3,43 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 import json
 import torch
 import time
+import subprocess
 from huggingface_hub import login
 from transformers import AutoTokenizer, AutoModelForCausalLM, GenerationConfig
 import psutil
-import subprocess
 
-def get_temperature():
+def get_gpu_temperature(samples=3, delay=0.1):
+    """
+    Measure GPU temperature multiple times using 'smctemp -g' CLI.
+    Returns average temperature in Celsius, or None if unavailable.
+    """
+    readings = []
     try:
-        output = subprocess.check_output(["osx-cpu-temp"], text=True)
-        temp_value = float(output.strip().replace("°C", ""))
-        return temp_value
+        for _ in range(samples):
+            output = subprocess.check_output(["smctemp", "-g"], text=True)
+            temp = float(output.strip())
+            readings.append(temp)
+            time.sleep(delay)
+        return round(sum(readings) / len(readings), 2)
     except Exception as e:
-        print(f"Failed to get temperature: {e}")
+        print(f"Failed to get GPU temperature via smctemp: {e}")
+        return None
+
+def get_cpu_temperature(samples=3, delay=0.1):
+    """
+    Measure CPU temperature multiple times using 'smctemp -c' CLI.
+    Returns average temperature in Celsius, or None if unavailable.
+    """
+    readings = []
+    try:
+        for _ in range(samples):
+            output = subprocess.check_output(["smctemp", "-c"], text=True)
+            temp = float(output.strip())
+            readings.append(temp)
+            time.sleep(delay)
+        return round(sum(readings) / len(readings), 2)
+    except Exception as e:
+        print(f"Failed to get CPU temperature via smctemp: {e}")
         return None
 
 # ---------- Model List ----------
@@ -81,7 +106,7 @@ The writing style should balance rigorous technical depth with accessibility for
 ]
 
 # ---------- Generation Config ----------
-MAX_NEW_TOKENS = 512
+MAX_NEW_TOKENS = 256
 generation_config = GenerationConfig(
     max_new_tokens=MAX_NEW_TOKENS,
     do_sample=False,
@@ -109,7 +134,8 @@ def benchmark_model_on_prompt_mps(model, tokenizer, prompt, dtype, num_runs=3):
         for i in range(num_runs):
             mem_before_mb = process.memory_full_info().rss / (1024 * 1024)  # Memory before generation
 
-            temp_before = get_temperature()
+            gpu_temp_before = get_gpu_temperature()
+            cpu_temp_before = get_cpu_temperature()
 
             start_time = time.time()
             with torch.no_grad():
@@ -121,7 +147,8 @@ def benchmark_model_on_prompt_mps(model, tokenizer, prompt, dtype, num_runs=3):
                 )
             first_token_time = time.time()
 
-            temp_after = get_temperature()
+            gpu_temp_after = get_gpu_temperature()
+            cpu_temp_after = get_cpu_temperature()
 
             end_time = time.time()
 
@@ -167,9 +194,12 @@ def benchmark_model_on_prompt_mps(model, tokenizer, prompt, dtype, num_runs=3):
             "peak_memory_mb": round(peak_mem_mb, 2),
             "full_wall_time_s": round(full_wall_time_s, 3),
             "output_text_preview": generated_text[:100] + "...",
-            "temp_before_c": round(temp_before, 1) if temp_before else None,
-            "temp_after_c": round(temp_after, 1) if temp_after else None,
-            "temp_delta_c": round((temp_after - temp_before), 1) if temp_before and temp_after else None,
+            "cpu_temp_before_c": cpu_temp_before,
+            "cpu_temp_after_c": cpu_temp_after,
+            "cpu_temp_delta_c": round(cpu_temp_after - cpu_temp_before, 2) if (cpu_temp_before is not None and cpu_temp_after is not None) else None,
+            "gpu_temp_before_c": gpu_temp_before,
+            "gpu_temp_after_c": gpu_temp_after,
+            "gpu_temp_delta_c": round(gpu_temp_after - gpu_temp_before, 2) if (gpu_temp_before is not None and gpu_temp_after is not None) else None,
         }
 
     except Exception as e:
@@ -287,7 +317,6 @@ def run_full_benchmark_mps(output_filename="benchmark_results_mps.json"):
 # --- Run the Benchmark ---
 if __name__ == "__main__":
     timestamp = time.strftime("%Y%m%d-%H%M%S")
-    results_dir = "benchmark_results"
-    os.makedirs(results_dir, exist_ok=True)
-    output_file = os.path.join(results_dir, f"benchmark_results_mps_{timestamp}.json")
+     # Make filename explicitly MPS/CPU
+    output_file = f"benchmark_results_mps_{timestamp}.json"
     run_full_benchmark_mps(output_filename=output_file)
