@@ -41,7 +41,7 @@ prompt_list = [
 NUM_TIMED_RUNS_PER_PROMPT = 3 # Number of repetitions for timing
 
 # ---------- Generation Config ----------
-MAX_NEW_TOKENS = 512
+MAX_NEW_TOKENS = 256
 generation_config = GenerationConfig(
     max_new_tokens=MAX_NEW_TOKENS,
     do_sample=False,
@@ -178,6 +178,8 @@ def run_full_benchmark_cuda(output_filename="benchmark_results_cuda.json"):
             current_generation_config = generation_config
 
             print(f"Loading model {model_id} (dtype: {benchmark_dtype})...")
+            
+            ### FIX LOADING THE MODEL, FIRST DOWNLOAD IN A SEPARATE FUNCTION, THEN RECORD LOADING TIME ###
             load_start = time.time()
             model = AutoModelForCausalLM.from_pretrained(
                 model_id, torch_dtype=benchmark_dtype
