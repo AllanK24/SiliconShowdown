@@ -44,7 +44,7 @@ def get_cpu_temperature(samples=3, delay=0.1):
 
 # ---------- Model List ----------
 model_list = [
-    "Qwen/Qwen2.5-1.5B-Instruct",
+    "Qwen/Qwen3-1.7B",
     'google/gemma-3-1b-it',
     'meta-llama/Llama-3.2-1B-Instruct',
 ]
