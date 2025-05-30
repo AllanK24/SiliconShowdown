@@ -13,3 +13,4 @@
 8. Come up with requirements file
 9. Remove redundant records from benchmark.py
 10. Come up with a script to install any python version if python doesn't exist
+11. Update the model list, add the diffusion LM if feasable
