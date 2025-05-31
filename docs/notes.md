@@ -2,6 +2,9 @@
 
 * Replace os.environ.get("HF_TOKEN"), set up the token directly, otherwise import of models won't work
 
+------ WSL Notes ------
+* Before making inference, allow WSL to use maximum memory
+
 ------ Questions ------
 1. Temperature and hyperparams of LLM generation process
 2. TTFT (alr done for mac)
