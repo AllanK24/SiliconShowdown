@@ -1,8 +1,10 @@
 import platform
 import subprocess
 import os
+import json
+import sys
 
-def collect_system_info(output_file="system_info.txt"):
+def collect_system_info(output_file="system_info.json"):
     info = {}
 
     # macOS version
@@ -31,6 +33,10 @@ def collect_system_info(output_file="system_info.txt"):
     except Exception:
         info["CPU Cores"] = "Unknown"
 
+    # Python executable and version
+    info["Python Executable"] = sys.executable
+    info["Python Version"] = platform.python_version()
+
     # Make sure output folder exists
     output_dir = os.path.join(os.getcwd(), "system_info")
     os.makedirs(output_dir, exist_ok=True)
@@ -38,8 +44,7 @@ def collect_system_info(output_file="system_info.txt"):
     # Save file inside system_info/
     output_path = os.path.join(output_dir, output_file)
     with open(output_path, "w") as f:
-        for key, value in info.items():
-            f.write(f"{key}: {value}\n")
+        json.dump(info, f, indent=4)
 
     print(f"✅ System information saved to {output_file}")
 
