@@ -44,9 +44,8 @@ def get_cpu_temperature(samples=3, delay=0.1):
 
 # ---------- Model List ----------
 model_list = [
-    "Qwen/Qwen3-1.7B",
     'google/gemma-3-1b-it',
-    'meta-llama/Llama-3.2-1B-Instruct',
+    # 'meta-llama/Llama-3.2-1B-Instruct',
 ]
 
 # ---------- Warm-up Prompts ----------
@@ -123,21 +122,39 @@ def benchmark_model_on_prompt_mps(model, tokenizer, prompt, dtype, num_runs=3):
 
         process = psutil.Process(os.getpid())
         peak_mem_mb = 0  # Track peak across runs
-        times_ms = []
-        ttft_ms_list = []
 
-        wall_time_start = time.time()  # Start full wall clock timer
-
-        output_tokens = 0
-        generated_text = ""
-
+        # --- Measure TTFT runs ---
+        ttft_runs = []
         for i in range(num_runs):
-            mem_before_mb = process.memory_full_info().rss / (1024 * 1024)  # Memory before generation
+            start_ttft = time.time()
+            with torch.no_grad():
+                _ = model.generate(
+                    **inputs,
+                    max_new_tokens=1,
+                    do_sample=False
+                )
+            end_ttft = time.time()
+            ttft_runs.append((end_ttft - start_ttft) * 1000)
+        # Compute average TTFT
+        ttft_ms_avg = round(sum(ttft_runs) / len(ttft_runs), 2)
 
+        # --- Measure full-generation runs ---
+        full_runs = []
+        output_tokens = None
+        generated_text = ""
+        mem_before_mb = None
+        mem_after_mb = None
+        memory_delta_mb = None
+        cpu_temp_before = None
+        cpu_temp_after = None
+        gpu_temp_before = None
+        gpu_temp_after = None
+        for i in range(num_runs):
+            mem_before_mb = process.memory_full_info().rss / (1024 * 1024)
             gpu_temp_before = get_gpu_temperature()
             cpu_temp_before = get_cpu_temperature()
 
-            start_time = time.time()
+            start_full = time.time()
             with torch.no_grad():
                 outputs = model.generate(
                     **inputs,
@@ -145,15 +162,11 @@ def benchmark_model_on_prompt_mps(model, tokenizer, prompt, dtype, num_runs=3):
                     return_dict_in_generate=True,
                     output_scores=True,
                 )
-            first_token_time = time.time()
+            end_full = time.time()
 
             gpu_temp_after = get_gpu_temperature()
             cpu_temp_after = get_cpu_temperature()
 
-            end_time = time.time()
-
-            iter_time_ms = (end_time - start_time) * 1000
-            current_ttft_ms = (first_token_time - start_time) * 1000
             mem_after_mb = process.memory_full_info().rss / (1024 * 1024)
             memory_delta_mb = mem_after_mb - mem_before_mb
 
@@ -161,22 +174,25 @@ def benchmark_model_on_prompt_mps(model, tokenizer, prompt, dtype, num_runs=3):
             if current_peak > peak_mem_mb:
                 peak_mem_mb = current_peak
 
-            times_ms.append(iter_time_ms)
-            ttft_ms_list.append(current_ttft_ms)
+            iter_time_ms = (end_full - start_full) * 1000
+            full_runs.append(iter_time_ms)
 
-            # Decode output only once
             if i == 0:
                 actual_output_ids = outputs.sequences[0][inputs.input_ids.shape[1]:]
                 generated_text = tokenizer.decode(actual_output_ids, skip_special_tokens=True)
                 output_tokens = len(actual_output_ids)
 
-        wall_time_end = time.time()
-        full_wall_time_s = wall_time_end - wall_time_start
-
-        # --- Aggregate Results ---
-        avg_time_ms = round(sum(times_ms) / len(times_ms), 3) if times_ms else 0
-        tokens_per_sec = round((output_tokens / (sum(times_ms) / len(times_ms) / 1000.0)), 2) if times_ms else 0
-        ttft_ms_avg = round(sum(ttft_ms_list) / len(ttft_ms_list), 2) if ttft_ms_list else None
+        avg_time_ms = round(sum(full_runs) / len(full_runs), 3) if full_runs else 0
+        tokens_per_sec = round(output_tokens / (avg_time_ms / 1000.0), 2) if full_runs else 0
+        memory_before_mb = round(mem_before_mb, 2) if mem_before_mb is not None else None
+        memory_after_mb = round(mem_after_mb, 2) if mem_after_mb is not None else None
+        peak_memory_mb = round(peak_mem_mb, 2)
+        cpu_temp_before_c = cpu_temp_before
+        cpu_temp_after_c = cpu_temp_after
+        cpu_temp_delta_c = round(cpu_temp_after - cpu_temp_before, 2) if (cpu_temp_before is not None and cpu_temp_after is not None) else None
+        gpu_temp_before_c = gpu_temp_before
+        gpu_temp_after_c = gpu_temp_after
+        gpu_temp_delta_c = round(gpu_temp_after - gpu_temp_before, 2) if (gpu_temp_before is not None and gpu_temp_after is not None) else None
 
         results = {
             "prompt": prompt,
@@ -186,20 +202,18 @@ def benchmark_model_on_prompt_mps(model, tokenizer, prompt, dtype, num_runs=3):
             "output_tokens": output_tokens,
             "avg_time_ms": avg_time_ms,
             "tokens_per_sec": tokens_per_sec,
-            "runs_time_ms": [round(t, 3) for t in times_ms],
             "ttft_ms_avg": ttft_ms_avg,
-            "memory_before_mb": round(mem_before_mb, 2),
-            "memory_after_mb": round(mem_after_mb, 2),
-            "memory_delta_mb": round(memory_delta_mb, 2),
-            "peak_memory_mb": round(peak_mem_mb, 2),
-            "full_wall_time_s": round(full_wall_time_s, 3),
+            "memory_before_mb": memory_before_mb,
+            "memory_after_mb": memory_after_mb,
+            "memory_delta_mb": round(memory_delta_mb, 2) if memory_delta_mb is not None else None,
+            "peak_memory_mb": peak_memory_mb,
             "output_text_preview": generated_text[:100] + "...",
-            "cpu_temp_before_c": cpu_temp_before,
-            "cpu_temp_after_c": cpu_temp_after,
-            "cpu_temp_delta_c": round(cpu_temp_after - cpu_temp_before, 2) if (cpu_temp_before is not None and cpu_temp_after is not None) else None,
-            "gpu_temp_before_c": gpu_temp_before,
-            "gpu_temp_after_c": gpu_temp_after,
-            "gpu_temp_delta_c": round(gpu_temp_after - gpu_temp_before, 2) if (gpu_temp_before is not None and gpu_temp_after is not None) else None,
+            "cpu_temp_before_c": cpu_temp_before_c,
+            "cpu_temp_after_c": cpu_temp_after_c,
+            "cpu_temp_delta_c": cpu_temp_delta_c,
+            "gpu_temp_before_c": gpu_temp_before_c,
+            "gpu_temp_after_c": gpu_temp_after_c,
+            "gpu_temp_delta_c": gpu_temp_delta_c,
         }
 
     except Exception as e:
@@ -250,8 +264,7 @@ def run_full_benchmark_mps(output_filename="benchmark_results_mps.json"):
             # Load to CPU first is still generally safer for memory management
             model = AutoModelForCausalLM.from_pretrained(
                 model_id,
-                torch_dtype=benchmark_dtype,
-                low_cpu_mem_usage=True
+                torch_dtype=benchmark_dtype
             )
             print(f"Model loaded to CPU. Moving to {device}...")
             model.to(device)
