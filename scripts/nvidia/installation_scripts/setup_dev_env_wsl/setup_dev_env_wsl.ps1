@@ -143,7 +143,7 @@ echo "Installing Python packages..."
 pip install --upgrade pip
 
 # Define the list of Python packages in a variable
-PYTHON_PACKAGES="torch==2.7.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128 tensorrt_llm huggingface_hub transformers pynvml matplotlib"
+PYTHON_PACKAGES="torch==2.7.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128 huggingface_hub transformers pynvml matplotlib --extra-index-url https://pypi.nvidia.com/ tensorrt-llm psutil"
 
 pip install $PYTHON_PACKAGES
 
@@ -188,6 +188,43 @@ if (Test-Path $BenchmarkScriptLocalPath) {
     Write-Host "✅ run_benchmark.py copied successfully."
 } else {
     Write-Host "⚠️ Could not find run_benchmark.py in current directory. Skipping copy."
+}
+
+# Copy collect_system_info.py into WSL
+$SystemInfoScriptLocalPath = ".\collect_system_info.py"  # Adjust path if needed
+$SystemInfoScriptWSLPath = "/home/benchmark/benchmark_env/collect_system_info.py"
+
+if (Test-Path $SystemInfoScriptLocalPath) {
+    Write-Host "📋 Copying collect_system_info.py into WSL benchmarking folder..."
+    wsl -d $Distro --user $WSLUser -- bash -c "rm -f $SystemInfoScriptWSLPath"
+    wsl -d $Distro --user $WSLUser -- bash -c "cat > $SystemInfoScriptWSLPath" < $SystemInfoScriptLocalPath
+    wsl -d $Distro --user $WSLUser -- bash -c "chmod +x $SystemInfoScriptWSLPath"
+    Write-Host "✅ collect_system_info.py copied successfully."
+} else {
+    Write-Host "⚠️ Could not find collect_system_info.py. Skipping."
+}
+
+Write-Host "🚀 Running collect_system_info.py inside WSL..."
+
+# Define WSL command to run the script and write output to known path
+$SystemInfoOutputWSL = "/home/benchmark/benchmark_env/system_info_nvidia.json"
+$SystemInfoOutputWindows = "$env:USERPROFILE\Desktop\system_info_nvidia.json"
+
+wsl -d $Distro --user $WSLUser -- bash -c "
+    source /home/benchmark/benchmark_env/.venv/bin/activate && \
+    python3 /home/benchmark/benchmark_env/collect_system_info.py > /dev/null
+"
+
+# Copy result from WSL to Windows Desktop
+Write-Host "💾 Copying system_info_nvidia.json to Windows Desktop..."
+wsl -d $Distro --user $WSLUser -- bash -c "
+    cat $SystemInfoOutputWSL
+" > $SystemInfoOutputWindows
+
+if (Test-Path $SystemInfoOutputWindows) {
+    Write-Host "✅ system_info_nvidia.json saved to your Desktop."
+} else {
+    Write-Host "❌ Failed to save system_info_nvidia.json. Please check script output."
 }
 
 Write-Host "`n🎉 All done! Your WSL environment is ready for benchmarking."

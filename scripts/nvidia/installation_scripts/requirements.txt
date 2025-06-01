@@ -1,2 +1,9 @@
-tensorrt_llm
-torch==2.7.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+torch==2.7.0 --index-url https://download.pytorch.org/whl/cu128
+torchvision --index-url https://download.pytorch.org/whl/cu128
+torchaudio --index-url https://download.pytorch.org/whl/cu128
+huggingface_hub 
+transformers 
+pynvml 
+matplotlib
+--extra-index-url https://pypi.nvidia.com/ tensorrt-llm
+psutil
