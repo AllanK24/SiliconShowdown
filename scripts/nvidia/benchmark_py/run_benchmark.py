@@ -158,7 +158,7 @@ def run_full_benchmark_cuda(output_filename="benchmark_results_cuda.json"):
 
     # --- HF Login ---
     try:
-        token = os.environ.get("HF_TOKEN")
+        token = os.getenv("HF_TOKEN")
         if token: login(token=token); print("Logged in.")
         else: print("HF_TOKEN not set. Ensure models cached/public.")
     except Exception as e: print(f"Login failed: {e}")
