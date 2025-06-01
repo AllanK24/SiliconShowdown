@@ -5,3 +5,5 @@ scripts/mac/system_info
 token.txt
 benchmarks
 .venv
+TensorRT-LLM
+models/
