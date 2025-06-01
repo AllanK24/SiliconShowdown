@@ -2,12 +2,13 @@
 
 * Replace os.environ.get("HF_TOKEN"), set up the token directly, otherwise import of models won't work
 
-* We need to agree on the specific version of Python to use, probably it will depend on the Mac dependencies
+* **We need to agree on the specific version of Python to use, probably it will depend on the Mac dependencies - 3.11.0**
 
 * When making the review of our project, we need to explicitly mention that we conduct the tests of Nvidia GPUs on Windows in WSL, not on the native Windows OS, due to TensorRT LLM not being supported on Windows natively. So the actual performance on the native Linux OS may differ.
 
 ------ WSL Notes ------
-* Before making inference, allow WSL to use maximum memory
+* **Before making inference, allow WSL to use maximum memory**
+* **We need to ship the python benchmarking files in the same folder as the installation and setup scripts, because the benchmarking python files will be copied to the WSL benchmarking directory during the installation process in `setup_dev_env_wsl.ps1` script.**
 
 ------ Questions ------
 1. Temperature and hyperparams of LLM generation process

@@ -10,8 +10,9 @@ $wslStatus = wsl --status 2>&1
 if ($LASTEXITCODE -eq 0) {
     Write-Host "✅ WSL is installed, continuing with setup..."
 } else {
-    Write-Host "❌ WSL not detected. Please install WSL first befoore running this script."
+    Write-Host "❌ WSL not detected. Please install WSL first before running this script."
     Read-Host "Press Enter to exit..."
+    exit 1
 }
 
 # Define the setup script to be run in WSL
@@ -145,5 +146,28 @@ wsl -d $Distro -- bash -c "chmod +x /home/benchmark/setup/setup.sh"
 
 Write-Host "Running setup inside WSL..."
 wsl -d $Distro --user root -- bash -c "/home/benchmark/setup/setup.sh"
+
+# Check venv exists
+$CheckVenv = wsl -d $Distro --user $WSLUser -- bash -c "test -d /home/benchmark/benchmark_env/.venv && echo 'venv_exists'"
+if (-not ($CheckVenv -eq "venv_exists")) {
+    Write-Host "❌ Virtual environment not found. Something went wrong during setup."
+    exit 1
+}else {
+    Write-Host "✅ Virtual environment is set up successfully."
+}
+
+# Copy the run_benchmark.py file into WSL
+$BenchmarkScriptLocalPath = ".\run_benchmark.py"  # Change path if needed
+$BenchmarkScriptWSLPath = "/home/benchmark/benchmark_env/run_benchmark.py"
+
+if (Test-Path $BenchmarkScriptLocalPath) {
+    Write-Host "📋 Copying run_benchmark.py into WSL benchmarking folder..."
+    wsl -d $Distro --user $WSLUser -- bash -c "rm -f $BenchmarkScriptWSLPath" # Remove any existing file
+    wsl -d $Distro --user $WSLUser -- bash -c "cat > $BenchmarkScriptWSLPath" < $BenchmarkScriptLocalPath # Copy the file
+    wsl -d $Distro --user $WSLUser -- bash -c "chmod +x $BenchmarkScriptWSLPath" # Make it executable
+    Write-Host "✅ run_benchmark.py copied successfully."
+} else {
+    Write-Host "⚠️ Could not find run_benchmark.py in current directory. Skipping copy."
+}
 
 Write-Host "`n🎉 All done! Your WSL environment is ready for benchmarking."
