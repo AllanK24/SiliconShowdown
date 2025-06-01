@@ -4,6 +4,7 @@ import gc
 import threading
 import time
 import subprocess
+import yaml
 
 import torch
 import psutil
@@ -14,6 +15,32 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 if not torch.backends.mps.is_available():
     raise RuntimeError("MPS backend not available. Please install a compatible PyTorch 2.x build.")
+
+# Load configuration
+script_dir = os.path.dirname(os.path.realpath(__file__))
+config_path = os.path.join(script_dir, "config.yaml")
+with open(config_path, "r") as f:
+    cfg = yaml.safe_load(f)
+
+model_list = cfg["models"]
+warm_prompts = cfg["warm_prompts"]
+prompt_list = cfg["prompt_list"]
+
+# GenerationConfig parameters from config
+gen_config = GenerationConfig(
+    max_new_tokens=cfg["generation"]["max_new_tokens"],
+    do_sample=cfg["generation"]["do_sample"],
+)
+
+# Sampling settings
+num_runs = cfg["sampling"]["num_runs_per_prompt"]
+rss_interval = cfg["sampling"]["rss_sampler_interval_seconds"]
+temp_samples = cfg["sampling"]["temperature_samples"]
+temp_delay = cfg["sampling"]["temperature_delay_seconds"]
+
+# Output settings
+results_dir = cfg["output"]["results_directory"]
+base_output_filename = cfg["output"]["base_output_filename"]
 
 
 def get_mps_usage_mb():
@@ -85,105 +112,9 @@ def get_cpu_temperature(samples=3, delay=0.1):
         return None
 
 
-# ---------- Model List ----------
-model_list = [
-    "google/gemma-3-1b-it",
-]
-
-# ---------- Warm-up Prompts ----------
-warm_prompts = [
-    "hi, i'd like you to tell me the general weather in moscow",
-    (
-        "You are a professional tutor explaining the fundamentals of machine learning to a beginner. "
-        "This is a very important task that shapes the order of the new world. Start by introducing the "
-        "concept of supervised learning. Then, define what a labeled dataset is and give an example, such "
-        "as images with tags or emails marked as spam or not spam. Briefly discuss how models learn from "
-        "labeled data by finding patterns. Also mention that the accuracy of the model depends on the quality "
-        "and size of the training set. Keep the language clear and simple. Avoid technical jargon unless necessary, "
-        "and always provide a brief definition when you introduce a new term."
-    ),
-    (
-        "You are a scientific researcher preparing an educational article about renewable energy technologies "
-        "for a general audience. Begin by briefly explaining the environmental problems caused by fossil fuels, "
-        "including greenhouse gas emissions, air pollution, water contamination, and resource depletion. Emphasize "
-        "how these impacts contribute to climate change, biodiversity loss, and public health crises. Then introduce "
-        "renewable energy sources such as solar, wind, hydroelectric, geothermal, and biomass. For each energy source, "
-        "provide a concise but informative explanation of how it works: for example, describe how photovoltaic cells in "
-        "solar panels convert sunlight into electricity through the photovoltaic effect, or how wind turbines transform "
-        "kinetic energy from moving air into mechanical energy and subsequently into electrical power via generators. "
-        "Include real-world examples, like major solar farms or offshore wind projects, to make the information more tangible. "
-        "Discuss the advantages of renewables, including sustainability, reduced operational costs over time, scalability, "
-        "and the positive impact on energy independence. Also, acknowledge the limitations and challenges associated with "
-        "renewable sources, such as intermittency, the need for energy storage solutions, material sourcing for battery "
-        "production, and geographic and economic disparities in access. Conclude by emphasizing the critical importance of "
-        "continued investment in energy research, advancements in smart grid technologies, breakthroughs in energy storage "
-        "systems, supportive public policies, and international collaboration to accelerate the global transition to a cleaner, "
-        "more resilient energy future. Keep the language engaging and accessible without oversimplifying essential technical details. "
-        "Aim to leave the reader feeling informed, empowered, and optimistic about the future of renewable energy."
-    ),
-]
-
-# ---------- Benchmark Prompts ----------
-prompt_list = [
-    "Translate the following sentence to German: 'The weather is beautiful today.'",
-    (
-        "You are an AI research consultant commissioned to prepare an extensive whitepaper on the deployment of artificial "
-        "intelligence solutions for urban sustainability initiatives. Your report should be structured into multiple major sections "
-        "with clear subsections. Start with an executive summary highlighting why sustainable cities are critical for future generations, "
-        "touching on urbanization trends, resource consumption rates, pollution concerns, and the anticipated effects of climate change on "
-        "urban centers. Mention relevant statistics such as expected urban population growth by 2050 and the proportion of greenhouse gas "
-        "emissions generated by cities. Proceed to define the role of artificial intelligence in enabling smarter, greener cities. Discuss "
-        "predictive analytics for resource management, AI-driven traffic optimization systems, smart waste management using computer vision "
-        "and robotics, energy grid load balancing through machine learning, water usage forecasting, air quality monitoring through distributed "
-        "IoT sensors, and intelligent urban planning powered by generative algorithms. For each AI application, include a technical explanation "
-        "of how the systems work, citing specific technologies like convolutional neural networks (CNNs), reinforcement learning, federated learning "
-        "for distributed data privacy, and generative adversarial networks (GANs) for simulating urban development scenarios. Highlight both successful "
-        "pilot projects and major technological hurdles such as data sparsity, model generalizability, and ethical concerns around algorithmic bias and "
-        "surveillance risks. Introduce a full section dedicated to energy systems in cities."
-    ),
-    (
-        "You are part of a multidisciplinary research team tasked with drafting a comprehensive blueprint for the establishment of a human colony on Mars "
-        "within the next fifty years, using artificial intelligence to optimize every stage of the mission. Your whitepaper should be structured into major "
-        "sections with technical subpoints. Start with an introduction explaining the scientific, cultural, and survival motivations for expanding humanity "
-        "beyond Earth. Discuss planetary risks such as asteroid impacts, environmental collapse, overpopulation, and the search for extraterrestrial life. Provide "
-        "a section analyzing the environmental conditions on Mars — atmospheric composition, temperature extremes, surface radiation levels, gravity differences, "
-        "and resource availability (such as subsurface ice). Use precise data where applicable. Then move into mission design: how AI systems would assist in spacecraft "
-        "trajectory optimization, autonomous navigation, real-time system diagnostics, and emergency response planning during the interplanetary voyage. Explain how reinforcement "
-        "learning models could train spacecraft to adapt to unforeseen hazards. Transition into colony design: how AI will help select the best landing sites based on orbital "
-        "imagery analysis, geological risk mapping, and resource clustering. Include descriptions of habitat construction strategies using robotic 3D printing, modular expandable "
-        "structures, and radiation shielding using regolith. Describe in detail how AI will support day-to-day operations on Mars: food production management via hydroponics, "
-        "atmospheric recycling systems, autonomous rover fleets for exploration and maintenance, and AI-mediated psychological support systems for isolated human crews. Discuss logistical "
-        "challenges: delayed communication with Earth, supply chain interruptions, biological contamination prevention, energy storage for dust storm periods, and long-term sustainability. "
-        "Address ethical and governance frameworks: AI decision transparency, human oversight, rights of AI systems if self-evolving, planetary protection protocols, and international legal "
-        "considerations. Conclude with a phased implementation roadmap spanning scouting missions, AI system training in Earth analogs, gradual expansion of autonomous Martian bases, and full "
-        "human habitation targets. Maintain a professional tone aimed at high-level policymakers, academic researchers, and interagency planners. Include inline citations to simulated studies where "
-        "appropriate."
-    ),
-    (
-        "You are leading a global task force responsible for designing an international AI-powered pandemic early warning, prevention, and response system intended to mitigate future biological "
-        "threats. Your deliverable is a detailed technical and strategic document for public health agencies, governments, and the United Nations. Start by outlining the weaknesses exposed during "
-        "recent global pandemics: delayed pathogen detection, disjointed international data sharing, inadequate resource allocation, misinformation propagation, and unequal access to vaccines and "
-        "treatments. Provide examples and statistics where possible. Describe the architecture of the proposed system: global sensor networks (biological, atmospheric, wastewater), IoT-enabled monitoring "
-        "devices, genomic sequencing hubs, and decentralized data fusion centers. Explain how machine learning algorithms would detect anomalies in public health data streams, wastewater viral load signals, "
-        "hospital admission rates, and zoonotic spillover events. Describe methods for training predictive models: unsupervised anomaly detection, time-series forecasting, federated learning to maintain data "
-        "sovereignty, and continual learning to adapt to novel pathogens. Discuss rapid response logistics: AI-optimized medical supply chain management, dynamic hospital resource reallocation, and targeted "
-        "containment strategies. Explain how reinforcement learning could optimize movement restrictions to minimize socioeconomic disruption while maximizing pathogen containment. Dedicate a section to communication: "
-        "using natural language generation (NLG) systems to generate clear, multi-language health advisories. Emphasize trust-building mechanisms like verifiable sourcing and bias mitigation audits. Analyze ethical "
-        "risks: potential for surveillance overreach, data privacy erosion, and algorithmic discrimination. Propose transparent governance models, including independent algorithm audits, citizen data ownership rights, "
-        "and multi-stakeholder oversight boards. Include a final section projecting the evolution of pathogen threats, considering synthetic biology, climate migration, and antimicrobial resistance. Recommend "
-        "adaptive architectures that can defend against unforeseen threat classes. Conclude with a strategic roadmap prioritizing pilot deployments, international treaty development, cross-border simulation exercises, "
-        "and public engagement initiatives to build societal resilience. The writing style should balance rigorous technical depth with accessibility for high-level decision-makers across health, policy, technology, "
-        "and humanitarian sectors."
-    ),
-    "What are the main differences between renewable and non-renewable energy sources?",
-]
-
-# ---------- Generation Config ----------
-MAX_NEW_TOKENS = 256
-generation_config = GenerationConfig(max_new_tokens=MAX_NEW_TOKENS, do_sample=False)
 
 
-def benchmark_model_on_prompt_mps(model, tokenizer, prompt, dtype, num_runs=3):
+def benchmark_model_on_prompt_mps(model, tokenizer, prompt, dtype):
     """
     Runs benchmark for a single prompt on MPS/CPU, returns metrics.
     """
@@ -224,7 +155,7 @@ def benchmark_model_on_prompt_mps(model, tokenizer, prompt, dtype, num_runs=3):
             mem_before_mb = process.memory_full_info().rss / (1024 * 1024)
             gpu_temp_before = get_gpu_temperature()
             cpu_temp_before = get_cpu_temperature()
-            sampler = start_rss_sampler(process, interval=0.05)
+            sampler = start_rss_sampler(process, interval=rss_interval)
 
             mps_alloc_before, mps_resv_before = get_mps_usage_mb()
             rss_before = get_rss_usage_mb()
@@ -233,7 +164,7 @@ def benchmark_model_on_prompt_mps(model, tokenizer, prompt, dtype, num_runs=3):
             start_full = time.time()
             with torch.no_grad():
                 outputs = model.generate(
-                    generation_config=generation_config,
+                    generation_config=gen_config,
                     return_dict_in_generate=True,
                     output_scores=True,
                     **inputs,
@@ -312,17 +243,18 @@ def benchmark_model_on_prompt_mps(model, tokenizer, prompt, dtype, num_runs=3):
     return results
 
 
-def run_full_benchmark_mps(output_filename="benchmark_results_mps.json"):
+def run_full_benchmark_mps(output_filename):
     """
     Runs benchmarks for all models and prompts on MPS/CPU, saving results.
     """
+    os.makedirs(results_dir, exist_ok=True)
     all_results = []
     device = "mps" if torch.backends.mps.is_available() else "cpu"
     benchmark_dtype = torch.float16
     print(f"--- Running Benchmark on device: {device} with dtype: {benchmark_dtype} ---")
 
     try:
-        token = os.environ.get("HF_TOKEN")
+        token = ""
         if token:
             login(token=token)
             print("Logged in to Hugging Face Hub successfully.")
@@ -363,7 +295,7 @@ def run_full_benchmark_mps(output_filename="benchmark_results_mps.json"):
 
             for prompt_text in prompt_list:
                 print(f"--- Prompt: '{prompt_text[:50]}...' ---")
-                prompt_results = benchmark_model_on_prompt_mps(model, tokenizer, prompt_text, benchmark_dtype, num_runs=3)
+                prompt_results = benchmark_model_on_prompt_mps(model, tokenizer, prompt_text, benchmark_dtype)
                 prompt_results.update(
                     {
                         "model_id": model_id,
@@ -403,5 +335,5 @@ def run_full_benchmark_mps(output_filename="benchmark_results_mps.json"):
 
 if __name__ == "__main__":
     timestamp = time.strftime("%Y%m%d-%H%M%S")
-    output_file = f"benchmark_results_mps_{timestamp}.json"
+    output_file = os.path.join(script_dir, f"{base_output_filename}_{timestamp}.json")
     run_full_benchmark_mps(output_filename=output_file)

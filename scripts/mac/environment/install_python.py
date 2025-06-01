@@ -2,7 +2,7 @@ import subprocess
 
 
 def install_python_3119_mac():
-    python_version = "3.11.9"
+    python_version = "3.11.12"
 
     # Check if already installed
     try:
@@ -27,8 +27,10 @@ def install_python_3119_mac():
         )
         print("Homebrew installation complete.")
 
-    # Install Python 3.11.9 using Homebrew
+    # Install Python 3.11.0 using Homebrew
     print(f"Installing Python {python_version} via Homebrew...")
     subprocess.run(["brew", "install", "python@3.11"], check=True)
 
     print(f"Python {python_version} installation via Homebrew complete.")
+if __name__ == "__main__":
+    install_python_3119_mac()
