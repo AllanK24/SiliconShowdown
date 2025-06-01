@@ -1,0 +1,149 @@
+# setup_dev_env_wsl.ps1
+# This script sets up a development environment to run the benchmarking in WSL (Windows Subsystem for Linux) with Ubuntu.
+
+# Setup the distribution and user for WSL
+$Distro = "Ubuntu"
+$WSLUser = "benchmark"
+
+# Check if WSL is installed
+$wslStatus = wsl --status 2>&1
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "✅ WSL is installed, continuing with setup..."
+} else {
+    Write-Host "❌ WSL not detected. Please install WSL first befoore running this script."
+    Read-Host "Press Enter to exit..."
+}
+
+# Define the setup script to be run in WSL
+$SetupScript = @'
+#!/bin/bash
+
+set -e
+
+### Create user if needed
+if ! id "benchmark" &>/dev/null; then
+    sudo adduser --disabled-password --gecos "" benchmark
+    echo "benchmark ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/benchmark
+fi
+
+sudo apt update && sudo apt upgrade -y
+# Install essential packages (change Python version here)
+sudo apt install -y build-essential cmake git wget curl unzip \
+    python3 python3-pip python3-venv libprotobuf-dev protobuf-compiler \
+    libgoogle-glog-dev libgflags-dev libssl-dev libyaml-cpp-dev git-lfs libopenmpi-dev \
+    zlib1g-dev libncurses5-dev libgdbm-dev libnss3-dev libreadline-dev libffi-dev libbz2-dev libsqlite3-dev liblzma-dev 
+
+### Install git-lfs
+echo "Installing Git LFS..."
+git lfs install
+
+### CUDA Toolkit Installation
+echo "Installing CUDA Toolkit 12.9 for WSL2..."
+
+sudo apt-key del 7fa2af80 || true
+
+wget https://developer.download.nvidia.com/compute/cuda/repos/wsl-ubuntu/x86_64/cuda-wsl-ubuntu.pin
+sudo mv cuda-wsl-ubuntu.pin /etc/apt/preferences.d/cuda-repository-pin-600
+
+wget https://developer.download.nvidia.com/compute/cuda/12.9.0/local_installers/cuda-repo-wsl-ubuntu-12-9-local_12.9.0-1_amd64.deb
+sudo dpkg -i cuda-repo-wsl-ubuntu-12-9-local_12.9.0-1_amd64.deb
+sudo cp /var/cuda-repo-wsl-ubuntu-12-9-local/cuda-*-keyring.gpg /usr/share/keyrings/
+
+sudo apt-get update
+sudo apt-get -y install cuda-toolkit-12-9
+
+### Install cuDNN
+echo "Installing cuDNN for CUDA 12.9..."
+
+## Install the cuDNN based on the Ubuntu version
+# Safely extract version from /etc/os-release
+version=$(grep '^VERSION_ID=' /etc/os-release | cut -d '"' -f 2)
+# Print the version
+echo "Detected Ubuntu version: $version"
+
+# Compare against supported versions
+if [[ "$version" == "20.04" ]]; then
+    wget https://developer.download.nvidia.com/compute/cudnn/9.10.1/local_installers/cudnn-local-repo-ubuntu2004-9.10.1_1.0-1_amd64.deb
+    sudo dpkg -i cudnn-local-repo-ubuntu2004-9.10.1_1.0-1_amd64.deb
+    sudo cp /var/cudnn-local-repo-ubuntu2004-9.10.1/cudnn-*-keyring.gpg /usr/share/keyrings/
+elif [[ "$version" == "22.04" ]]; then
+    wget https://developer.download.nvidia.com/compute/cudnn/9.10.1/local_installers/cudnn-local-repo-ubuntu2204-9.10.1_1.0-1_amd64.deb
+    sudo dpkg -i cudnn-local-repo-ubuntu2204-9.10.1_1.0-1_amd64.deb
+    sudo cp /var/cudnn-local-repo-ubuntu2204-9.10.1/cudnn-*-keyring.gpg /usr/share/keyrings/
+elif [[ "$version" == "24.04" ]]; then
+    wget https://developer.download.nvidia.com/compute/cudnn/9.10.1/local_installers/cudnn-local-repo-ubuntu2404-9.10.1_1.0-1_amd64.deb
+    sudo dpkg -i cudnn-local-repo-ubuntu2404-9.10.1_1.0-1_amd64.deb
+    sudo cp /var/cudnn-local-repo-ubuntu2404-9.10.1/cudnn-*-keyring.gpg /usr/share/keyrings/
+else
+    echo "Unknown or unsupported Ubuntu version: $version"
+    echo "Please install cuDNN manually for your version of Ubuntu."
+    exit 1
+fi
+
+sudo apt-get update
+sudo apt-get -y install cudnn
+sudo apt-get -y install cudnn-cuda-12
+
+# Check if CUDA and cuDNN are installed correctly
+if command -v nvcc --version &>/dev/null && command -v nvidia-smi &>/dev/null; then
+    echo "✅ CUDA and cuDNN installed successfully."
+else
+    echo "❌ CUDA or cuDNN installation failed. Please check the logs."
+    exit 1
+fi
+
+### Install Python packages and create virtual environment ###
+echo "Setting up Python environment..."
+
+# Create a folder to install Python and envs
+echo "Creating Python environment directory..."
+mkdir -p ~/benchmark_env/python
+cd ~/benchmark_env/python
+
+# Download and build Python 3.11.0 from source
+echo "Downloading and building Python 3.11.0..."
+PYTHON_VERSION=3.11.0
+curl -O https://www.python.org/ftp/python/$PYTHON_VERSION/Python-$PYTHON_VERSION.tgz
+tar -xzf Python-$PYTHON_VERSION.tgz
+cd Python-$PYTHON_VERSION
+
+./configure --enable-optimizations
+make -j$(nproc)
+sudo make altinstall  # installs as python3.11 without overwriting system python
+
+# Create virtual environment
+echo "Creating virtual environment..."
+cd ~/benchmark_env
+python3.11 -m venv .venv
+source .venv/bin/activate
+
+# Upgrade pip and install required Python packages
+echo "Installing Python packages..."
+pip install --upgrade pip
+
+# Define the list of Python packages in a variable
+PYTHON_PACKAGES="torch==2.7.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128 tensorrt_llm huggingface_hub transformers pynvml matplotlib"
+
+pip install $PYTHON_PACKAGES
+
+# Clone TensorRT LLM repository
+echo "Cloning TensorRT LLM repository..."
+git clone https://github.com/NVIDIA/TensorRT-LLM.git
+
+echo "✅ WSL environment setup complete."
+'@
+
+# Write setup script to a temp file
+$TempScriptPath = "$env:TEMP\wsl_setup.sh"
+$SetupScript | Out-File -Encoding ASCII -FilePath $TempScriptPath
+
+Write-Host "Copying setup script to WSL..."
+wsl -d $Distro -- bash -c "mkdir -p /home/benchmark/setup"
+wsl -d $Distro -- bash -c "rm -f /home/benchmark/setup/setup.sh"
+wsl -d $Distro -- bash -c "cat > /home/benchmark/setup/setup.sh" < $TempScriptPath
+wsl -d $Distro -- bash -c "chmod +x /home/benchmark/setup/setup.sh"
+
+Write-Host "Running setup inside WSL..."
+wsl -d $Distro --user root -- bash -c "/home/benchmark/setup/setup.sh"
+
+Write-Host "`n🎉 All done! Your WSL environment is ready for benchmarking."
