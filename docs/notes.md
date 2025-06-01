@@ -8,8 +8,6 @@
 3. Acceleration: MLX and Nvidia for Windows (https://github.com/sgl-project/sglang, https://github.com/vllm-project/vllm)
 4. Change CUDA download script, set up the .exe to install via command line code
 5. Match benchmark functions
-6. Apple Memory issues fix
-7. Apple system info (json + python loc + version). (alr done for mac)
 8. Come up with requirements file
 9. Remove redundant records from benchmark.py
 10. Come up with a script to install any python version if python doesn't exist (alr done for mac)

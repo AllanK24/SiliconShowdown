@@ -2,3 +2,5 @@ scripts/nvidia/.venv
 scripts/nvidia/.env
 scripts/mac/ai_benchmark_env
 scripts/mac/system_info
+token.txt
+benchmarks
