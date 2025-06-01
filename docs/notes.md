@@ -9,6 +9,7 @@
 ------ WSL Notes ------
 * **Before making inference, allow WSL to use maximum memory**
 * **We need to ship the python benchmarking files in the same folder as the installation and setup scripts, because the benchmarking python files will be copied to the WSL benchmarking directory during the installation process in `setup_dev_env_wsl.ps1` script.**
+* Add run_benchmark_tensorrt_llm.py to the list of files to be copied to the WSL benchmarking directory in `setup_dev_env_wsl.ps1` script.
 
 ------ Questions ------
 1. Temperature and hyperparams of LLM generation process

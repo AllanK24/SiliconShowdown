@@ -15,6 +15,26 @@ if ($LASTEXITCODE -eq 0) {
     exit 1
 }
 
+# Configure WSL to use maximum resources
+Write-Host "🛠️ Configuring WSL to use maximum CPU, RAM, and enable GPU support..."
+
+$WSLConfigPath = "$env:USERPROFILE\.wslconfig"
+$WSLConfigContent = @"
+[wsl2]
+memory=100%
+processors=100%
+gpuSupport=true
+"@
+
+$WSLConfigContent | Out-File -Encoding ASCII -FilePath $WSLConfigPath
+
+Write-Host "✅ WSL configuration saved to $WSLConfigPath"
+
+# Shutdown WSL to apply the config (it will restart when setup continues)
+Write-Host "🔄 Shutting down WSL to apply new settings..."
+wsl --shutdown
+Start-Sleep -Seconds 2
+
 # Define the setup script to be run in WSL
 $SetupScript = @'
 #!/bin/bash
@@ -156,7 +176,7 @@ if (-not ($CheckVenv -eq "venv_exists")) {
     Write-Host "✅ Virtual environment is set up successfully."
 }
 
-# Copy the run_benchmark.py file into WSL
+# Copy the run_benchmark.py file into WSL (======add run_benchmark_tensorrt_llm.py as well later======)
 $BenchmarkScriptLocalPath = ".\run_benchmark.py"  # Change path if needed
 $BenchmarkScriptWSLPath = "/home/benchmark/benchmark_env/run_benchmark.py"
 
