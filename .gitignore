@@ -7,3 +7,4 @@ benchmarks
 .venv
 TensorRT-LLM
 models/
+.env

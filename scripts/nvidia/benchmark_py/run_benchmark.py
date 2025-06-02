@@ -71,6 +71,22 @@ def benchmark_model_on_prompt_cuda(model, tokenizer, prompt, generation_config_o
     try:
         inputs = tokenizer(prompt, return_tensors="pt").to(device)
         input_tokens = inputs.input_ids.shape[1]
+        
+        # --- TTFT Runs ---
+        ttft_runs = []
+        for _ in range(num_runs):
+            start_evt = torch.cuda.Event(enable_timing=True)
+            end_evt   = torch.cuda.Event(enable_timing=True)
+
+            start_evt.record()
+            with torch.inference_mode():
+                _ = model.generate(**inputs,
+                                max_new_tokens=1,
+                                do_sample=False)
+            end_evt.record()
+            torch.cuda.synchronize()               # wait so elapsed_time is valid
+            ttft_runs.append(start_evt.elapsed_time(end_evt))  # ms
+        ttft_ms_avg = round(statistics.mean(ttft_runs), 2)
 
         # --- Timed Runs ---
         gpu_times_ms = []
@@ -117,11 +133,10 @@ def benchmark_model_on_prompt_cuda(model, tokenizer, prompt, generation_config_o
 
         results = {
             "prompt": prompt,
-            "status": "success",
-            "error_message": None,
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
             "avg_gpu_time_ms": round(avg_time_ms, 3),
+            "ttft_ms_avg": ttft_ms_avg,
             "stddev_gpu_time_ms": round(stddev_time_ms, 3),
             "tokens_per_sec": round(tokens_per_sec, 2),
             "runs_gpu_time_ms": [round(t, 3) for t in gpu_times_ms],
