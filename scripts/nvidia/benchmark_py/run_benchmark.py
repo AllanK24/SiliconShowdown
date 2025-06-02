@@ -207,7 +207,6 @@ def run_full_benchmark_cuda(output_filename="benchmark_results_cuda.json"):
                 "model_id": model_id,
                 "benchmark_dtype": str(benchmark_dtype),
                 "batch_size": BATCH_SIZE,
-                # "generation_config": current_generation_config.to_dict(),
                 "num_global_warmup_runs": NUM_GLOBAL_WARMUP_RUNS,
                 "num_timed_runs_per_prompt": NUM_TIMED_RUNS_PER_PROMPT,
                 "model_load_time_s": round(model_load_time, 2),
@@ -264,7 +263,7 @@ def run_full_benchmark_cuda(output_filename="benchmark_results_cuda.json"):
 
 # --- Run ---
 if __name__ == "__main__":
-    # timestamp = time.strftime("%Y%m%d-%H%M%S")
-    # output_file = f"llm_benchmark_results_cuda_{timestamp}.json"
-    # run_full_benchmark_cuda(output_filename=output_file)
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    output_file = f"llm_benchmark_results_cuda_{timestamp}.json"
+    run_full_benchmark_cuda(output_filename=output_file)
     save_generation_config(generation_config, "generation_config.json")
