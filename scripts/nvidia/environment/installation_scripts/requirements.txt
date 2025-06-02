@@ -7,3 +7,13 @@ pynvml
 matplotlib
 --extra-index-url https://pypi.nvidia.com/ tensorrt-llm
 psutil
+datasets 
+evaluate 
+rouge_score 
+transformers-stream-generator 
+sentencepiece 
+tiktoken 
+einops
+h5py
+safetensors
+flax
