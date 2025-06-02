@@ -410,7 +410,7 @@ if __name__ == "__main__":
     print(f"Current working directory: {os.getcwd()}")
     print(f"Script directory: {script_dir}")
     print(f"Effective user ID: {os.geteuid()} (0 is root)")
-    if os.geteuid() == 0: print("WARNING: Script is running as root. Recommended to run as normal user.")
+    if os.geteuid() == 0: print("Script is running as root.")
 
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     abs_results_dir = results_dir_from_config

@@ -4,6 +4,8 @@ models:
   # - another/model-id
   # - huggingface/model-v2
 
+huggingface_token: ""
+
 # 2. Warm-up prompts (run once per model before measuring)
 warm_prompts:
   - "hi, i'd like you to tell me the general weather in moscow"
@@ -96,5 +98,5 @@ sampling:
 
 # 6. Output settings
 output:
-  results_directory: "benchmarks/results"
+  results_directory: "results"
   base_output_filename: "benchmark_results_mps"

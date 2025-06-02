@@ -30,12 +30,22 @@ echo "✅ Python 3.11 installed."
 
 echo ""
 echo "🔧 Installing smctemp via git clone..."
-git clone https://github.com/narugit/smctemp.git /tmp/smctemp
-cd /tmp/smctemp
+
+SMCTEMP_DIR="/tmp/smctemp"
+
+# Check if the directory exists and remove it to ensure a clean clone
+if [ -d "$SMCTEMP_DIR" ]; then
+    echo "Found existing $SMCTEMP_DIR. Removing it for a clean installation..."
+    rm -rf "$SMCTEMP_DIR"
+fi
+
+# Now clone fresh
+git clone https://github.com/narugit/smctemp.git "$SMCTEMP_DIR"
+cd "$SMCTEMP_DIR"
 make
 sudo make install
 echo "✅ smctemp installed."
-cd "$SCRIPT_DIR"
+cd "$SCRIPT_DIR" # Go back to the original script directory
 
 # Force shell to use Homebrew’s Python 3.11
 export PATH="$(brew --prefix)/opt/python@3.11/bin:$PATH"
