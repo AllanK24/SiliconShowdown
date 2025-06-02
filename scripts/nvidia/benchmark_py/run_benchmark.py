@@ -1,8 +1,9 @@
 import os
+import time
+import yaml
 import json
 import torch
-import time
-import statistics # For standard deviation
+import statistics
 try:
     import pynvml
     pynvml.nvmlInit()
@@ -15,38 +16,26 @@ except Exception as e:
 from huggingface_hub import login
 from transformers import AutoTokenizer, AutoModelForCausalLM, GenerationConfig
 
+# Load config from YAML
+with open("config.yaml", "r") as f:
+    config = yaml.safe_load(f)
+
 # ---------- Model List (LLM Only) ----------
-model_list = [
-    "Qwen/Qwen2.5-1.5B-Instruct",
-    'google/gemma-3-1b-it',
-    'meta-llama/Llama-3.2-1B-Instruct',
-]
+model_list = config["model_list"]
 
 # ---------- Warm-up Prompts ----------
-warm_prompts = [
-    "Hello, how are you today?",
-    "What is the capital of France?",
-    "Write a short poem about clouds."
-]
+warm_prompts = config["warm_prompts"]
 NUM_GLOBAL_WARMUP_RUNS = len(warm_prompts)
 
 # ---------- Benchmark Prompts ----------
-prompt_list = [
-    "Translate the following sentence to German: 'The weather is beautiful today.'",
-    "Explain the concept of quantum entanglement in simple terms.",
-    "Write a python function that calculates the factorial of a number.",
-    "Summarize the main plot points of the movie 'Inception'.",
-    "What are the main differences between renewable and non-renewable energy sources?",
-]
-NUM_TIMED_RUNS_PER_PROMPT = 3 # Number of repetitions for timing
+prompt_list = config["prompt_list"]
+NUM_TIMED_RUNS_PER_PROMPT = config["num_timed_runs_per_prompt"] # Number of repetitions for timing
 
 # ---------- Generation Config ----------
-MAX_NEW_TOKENS = 256
 generation_config = GenerationConfig(
-    max_new_tokens=MAX_NEW_TOKENS,
-    do_sample=False,
+    **config["generation_config"],
 )
-BATCH_SIZE = 1 # Fixed batch size
+BATCH_SIZE = config["batch_size"] # Fixed batch size
 
 # ---------- NVML Helpers (Nvidia Specific) ----------
 def get_nvidia_gpu_details(device_id=0):
@@ -135,8 +124,8 @@ def benchmark_model_on_prompt_cuda(model, tokenizer, prompt, generation_config_o
             "prompt": prompt,
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
-            "avg_gpu_time_ms": round(avg_time_ms, 3),
             "ttft_ms_avg": ttft_ms_avg,
+            "avg_gpu_time_ms": round(avg_time_ms, 3),
             "stddev_gpu_time_ms": round(stddev_time_ms, 3),
             "tokens_per_sec": round(tokens_per_sec, 2),
             "runs_gpu_time_ms": [round(t, 3) for t in gpu_times_ms],
@@ -168,7 +157,7 @@ def run_full_benchmark_cuda(output_filename="benchmark_results_cuda.json"):
 
     all_results = []
     device = "cuda"
-    benchmark_dtype = torch.float16 # Recommended dtype
+    benchmark_dtype = getattr(torch, config.get("benchmark_dtype", "float16")) # Recommended dtype
     print(f"--- Running CUDA Benchmark with dtype: {benchmark_dtype}, Batch Size: {BATCH_SIZE} ---")
 
     # --- HF Login ---

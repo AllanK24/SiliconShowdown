@@ -143,7 +143,7 @@ echo "Installing Python packages..."
 pip install --upgrade pip
 
 # Define the list of Python packages in a variable
-PYTHON_PACKAGES="torch==2.7.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128 huggingface_hub transformers pynvml matplotlib --extra-index-url https://pypi.nvidia.com/ tensorrt-llm psutil datasets evaluate rouge_score transformers-stream-generator sentencepiece tiktoken einops h5py safetensors flax"
+PYTHON_PACKAGES="torch==2.7.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128 huggingface_hub transformers pynvml matplotlib --extra-index-url https://pypi.nvidia.com/ tensorrt-llm psutil datasets evaluate rouge_score transformers-stream-generator sentencepiece tiktoken einops h5py safetensors flax pyyaml"
 
 pip install $PYTHON_PACKAGES
 
