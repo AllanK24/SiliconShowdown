@@ -1,5 +1,4 @@
 #!/bin/zsh
-# Or #!/bin/bash
 # Exit immediately if a command exits with a non-zero status.
 set -e
 
@@ -54,7 +53,7 @@ echo "Making installer ($INSTALL_SCRIPT_NAME) executable..."
 if [ ! -f "$INSTALL_SCRIPT_NAME" ]; then
     echo "ERROR: $INSTALL_SCRIPT_NAME not found in $(pwd)"
     echo "Please ensure all files from the ZIP are correctly extracted here."
-    read -p "Press Enter to exit."
+    read "?Press Enter to exit."
     exit 1
 fi
 chmod +x "$INSTALL_SCRIPT_NAME"
@@ -81,7 +80,7 @@ if [ ! -f "$VENV_ACTIVATE_PATH" ]; then
     echo "ERROR: Virtual environment activation script not found at $VENV_ACTIVATE_PATH"
     echo "This script should have been created by $INSTALL_SCRIPT_NAME."
     echo "Please check the output of the installer script for errors."
-    read -p "Press Enter to exit."
+    read "?Press Enter to exit."
     exit 1
 fi
 source "$VENV_ACTIVATE_PATH"
@@ -144,6 +143,6 @@ echo "Please verify the files exist and then send them to us."
 echo "-------------------------------------------"
 echo ""
 # Keep the terminal window open until the user presses Enter
-read -p "Press Enter to close this Terminal window."
+read "?Press Enter to close this Terminal window."
 
 exit 0
