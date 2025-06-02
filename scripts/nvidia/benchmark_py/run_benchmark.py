@@ -179,7 +179,12 @@ def run_full_benchmark_cuda(output_filename="benchmark_results_cuda.json"):
 
             print(f"Loading model {model_id} (dtype: {benchmark_dtype})...")
             
-            ### FIX LOADING THE MODEL, FIRST DOWNLOAD IN A SEPARATE FUNCTION, THEN RECORD LOADING TIME ###
+            # Preload model to ensure it is downloaded before timing
+            _ = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=benchmark_dtype).to(device) # Preload to ensure model is downloaded
+            torch.cuda.empty_cache() # Clear cache before loading to avoid memory issues
+            print(f"Model {model_id} downloaded, now loading to device...")
+            
+            # --- Load Model ---
             load_start = time.time()
             model = AutoModelForCausalLM.from_pretrained(
                 model_id, torch_dtype=benchmark_dtype
@@ -205,7 +210,7 @@ def run_full_benchmark_cuda(output_filename="benchmark_results_cuda.json"):
             print(f"Running {NUM_GLOBAL_WARMUP_RUNS} global warm-up prompts...")
             for w_prompt in warm_prompts:
                 w_inputs = tokenizer(w_prompt, return_tensors="pt").to(device)
-                with torch.no_grad():
+                with torch.inference_mode():
                     _ = model.generate(**w_inputs, generation_config=current_generation_config) # Use potentially updated config
             torch.cuda.synchronize(device)
             print("Global warm-up complete.")
