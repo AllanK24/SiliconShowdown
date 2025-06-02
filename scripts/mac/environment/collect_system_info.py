@@ -63,7 +63,7 @@ if __name__ == "__main__":
     # 1. Determine a fixed output location under project-root/benchmark/
     script_dir = os.path.dirname(os.path.realpath(__file__))
     project_root = os.path.abspath(os.path.join(script_dir, ".."))
-    bench_dir = os.path.join(project_root, "benchmark")
+    bench_dir = os.path.join(project_root, "benchmark/results")
     output_file = os.path.join(bench_dir, "system_info.json")
 
     # 2. Collect info and write it

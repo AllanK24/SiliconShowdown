@@ -1,7 +1,7 @@
 # 1. List of model IDs to benchmark
 models:
   - google/gemma-3-1b-it
-  # - another/model-id
+  - Qwen/Qwen3-1.7B
   # - huggingface/model-v2
 
 huggingface_token: ""

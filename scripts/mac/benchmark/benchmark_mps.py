@@ -86,7 +86,7 @@ results_dir_from_config = cfg["output"]["results_directory"]
 base_output_filename_cfg = cfg["output"]["base_output_filename"] # Renamed for clarity
 
 
-save_generation_config(gen_config, os.path.join(script_dir, "generation_config.json"))
+save_generation_config(gen_config, os.path.join(script_dir, "results/generation_config.json"))
 
 # --- Sudo Helper Function ---
 def ensure_sudo_active(interactive_prompt_timeout=60):
