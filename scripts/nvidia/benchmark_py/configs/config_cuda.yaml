@@ -1,32 +1,29 @@
-# LLM Benchmark Configuration
+# LLM Benchmark Configuration for CUDA
 
-model\_list:
+model_list:
+  - Qwen/Qwen2.5-1.5B-Instruct
+  - google/gemma-3-1b-it
+  - meta-llama/Llama-3.2-1B-Instruct
 
-* Qwen/Qwen2.5-1.5B-Instruct
-* google/gemma-3-1b-it
-* meta-llama/Llama-3.2-1B-Instruct
+warm_prompts:
+  - "Hello, how are you today?"
+  - "What is the capital of France?"
+  - "Write a short poem about clouds."
 
-warm\_prompts:
+prompt_list:
+  - "Translate the following sentence to German: 'The weather is beautiful today.'"
+  - "Explain the concept of quantum entanglement in simple terms."
+  - "Write a python function that calculates the factorial of a number."
+  - "Summarize the main plot points of the movie 'Inception'."
+  - "What are the main differences between renewable and non-renewable energy sources?"
 
-* "Hello, how are you today?"
-* "What is the capital of France?"
-* "Write a short poem about clouds."
+num_timed_runs_per_prompt: 3
 
-prompt\_list:
+generation_config:
+  max_new_tokens: 256
+  do_sample: false
 
-* "Translate the following sentence to German: 'The weather is beautiful today.'"
-* "Explain the concept of quantum entanglement in simple terms."
-* "Write a python function that calculates the factorial of a number."
-* "Summarize the main plot points of the movie 'Inception'."
-* "What are the main differences between renewable and non-renewable energy sources?"
-
-num\_timed\_runs\_per\_prompt: 3
-
-generation\_config:
-max\_new\_tokens: 256
-do\_sample: false
-
-batch\_size: 1
+batch_size: 1
 
 # Advanced/optional settings
-benchmark\_dtype: float16        # torch dtype for model weights
+benchmark_dtype: float16

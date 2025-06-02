@@ -17,7 +17,7 @@ from huggingface_hub import login
 from transformers import AutoTokenizer, AutoModelForCausalLM, GenerationConfig
 
 # Load config from YAML
-with open("config.yaml", "r") as f:
+with open("scripts/nvidia/benchmark_py/configs/config_cuda.yaml", "r") as f:
     config = yaml.safe_load(f)
 
 # ---------- Model List (LLM Only) ----------
@@ -36,6 +36,11 @@ generation_config = GenerationConfig(
     **config["generation_config"],
 )
 BATCH_SIZE = config["batch_size"] # Fixed batch size
+
+def save_generation_config(generation_config: GenerationConfig, filename="generation_config.json"):
+    """Saves the generation config to a JSON file."""
+    with open(filename, "w") as f:
+        json.dump(generation_config.to_dict(), f, indent=4)
 
 # ---------- NVML Helpers (Nvidia Specific) ----------
 def get_nvidia_gpu_details(device_id=0):
@@ -202,7 +207,7 @@ def run_full_benchmark_cuda(output_filename="benchmark_results_cuda.json"):
                 "model_id": model_id,
                 "benchmark_dtype": str(benchmark_dtype),
                 "batch_size": BATCH_SIZE,
-                "generation_config": current_generation_config.to_dict(),
+                # "generation_config": current_generation_config.to_dict(),
                 "num_global_warmup_runs": NUM_GLOBAL_WARMUP_RUNS,
                 "num_timed_runs_per_prompt": NUM_TIMED_RUNS_PER_PROMPT,
                 "model_load_time_s": round(model_load_time, 2),
@@ -259,6 +264,7 @@ def run_full_benchmark_cuda(output_filename="benchmark_results_cuda.json"):
 
 # --- Run ---
 if __name__ == "__main__":
-    timestamp = time.strftime("%Y%m%d-%H%M%S")
-    output_file = f"llm_benchmark_results_cuda_{timestamp}.json"
-    run_full_benchmark_cuda(output_filename=output_file)
+    # timestamp = time.strftime("%Y%m%d-%H%M%S")
+    # output_file = f"llm_benchmark_results_cuda_{timestamp}.json"
+    # run_full_benchmark_cuda(output_filename=output_file)
+    save_generation_config(generation_config, "generation_config.json")

@@ -16,6 +16,11 @@ from transformers import AutoTokenizer, AutoModelForCausalLM, GenerationConfig
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
+def save_generation_config(generation_config: GenerationConfig, filename="generation_config.json"):
+    """Saves the generation config to a JSON file."""
+    with open(filename, "w") as f:
+        json.dump(generation_config.to_dict(), f, indent=4)
+
 if not torch.backends.mps.is_available():
     raise RuntimeError("MPS backend not available. Please install a compatible PyTorch 2.x build.")
 
@@ -32,6 +37,8 @@ gen_config = GenerationConfig(
     max_new_tokens=cfg["generation"]["max_new_tokens"],
     do_sample=cfg["generation"]["do_sample"],
 )
+
+save_generation_config(gen_config, os.path.join(script_dir, "generation_config.json"))
 
 num_runs = cfg["sampling"]["num_runs_per_prompt"]
 rss_interval = cfg["sampling"]["rss_sampler_interval_seconds"]
