@@ -7,6 +7,10 @@ benchmarks
 .venv
 TensorRT-LLM
 models/
+<<<<<<< HEAD
 scripts/mac/environment/ai_benchmark_env
 scripts/mac/Run Benchmark.app
 scripts/mac/Run Cleanup.app
+=======
+.env
+>>>>>>> 2140b48f5a2bbc9471c56bd6f856f992e95fbcab

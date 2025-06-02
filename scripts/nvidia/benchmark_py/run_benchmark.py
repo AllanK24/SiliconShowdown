@@ -1,8 +1,9 @@
 import os
+import time
+import yaml
 import json
 import torch
-import time
-import statistics # For standard deviation
+import statistics
 try:
     import pynvml
     pynvml.nvmlInit()
@@ -15,38 +16,31 @@ except Exception as e:
 from huggingface_hub import login
 from transformers import AutoTokenizer, AutoModelForCausalLM, GenerationConfig
 
+# Load config from YAML
+with open("scripts/nvidia/benchmark_py/configs/config_cuda.yaml", "r") as f:
+    config = yaml.safe_load(f)
+
 # ---------- Model List (LLM Only) ----------
-model_list = [
-    "Qwen/Qwen2.5-1.5B-Instruct",
-    'google/gemma-3-1b-it',
-    'meta-llama/Llama-3.2-1B-Instruct',
-]
+model_list = config["model_list"]
 
 # ---------- Warm-up Prompts ----------
-warm_prompts = [
-    "Hello, how are you today?",
-    "What is the capital of France?",
-    "Write a short poem about clouds."
-]
+warm_prompts = config["warm_prompts"]
 NUM_GLOBAL_WARMUP_RUNS = len(warm_prompts)
 
 # ---------- Benchmark Prompts ----------
-prompt_list = [
-    "Translate the following sentence to German: 'The weather is beautiful today.'",
-    "Explain the concept of quantum entanglement in simple terms.",
-    "Write a python function that calculates the factorial of a number.",
-    "Summarize the main plot points of the movie 'Inception'.",
-    "What are the main differences between renewable and non-renewable energy sources?",
-]
-NUM_TIMED_RUNS_PER_PROMPT = 3 # Number of repetitions for timing
+prompt_list = config["prompt_list"]
+NUM_TIMED_RUNS_PER_PROMPT = config["num_timed_runs_per_prompt"] # Number of repetitions for timing
 
 # ---------- Generation Config ----------
-MAX_NEW_TOKENS = 256
 generation_config = GenerationConfig(
-    max_new_tokens=MAX_NEW_TOKENS,
-    do_sample=False,
+    **config["generation_config"],
 )
-BATCH_SIZE = 1 # Fixed batch size
+BATCH_SIZE = config["batch_size"] # Fixed batch size
+
+def save_generation_config(generation_config: GenerationConfig, filename="generation_config.json"):
+    """Saves the generation config to a JSON file."""
+    with open(filename, "w") as f:
+        json.dump(generation_config.to_dict(), f, indent=4)
 
 # ---------- NVML Helpers (Nvidia Specific) ----------
 def get_nvidia_gpu_details(device_id=0):
@@ -71,6 +65,22 @@ def benchmark_model_on_prompt_cuda(model, tokenizer, prompt, generation_config_o
     try:
         inputs = tokenizer(prompt, return_tensors="pt").to(device)
         input_tokens = inputs.input_ids.shape[1]
+        
+        # --- TTFT Runs ---
+        ttft_runs = []
+        for _ in range(num_runs):
+            start_evt = torch.cuda.Event(enable_timing=True)
+            end_evt   = torch.cuda.Event(enable_timing=True)
+
+            start_evt.record()
+            with torch.inference_mode():
+                _ = model.generate(**inputs,
+                                max_new_tokens=1,
+                                do_sample=False)
+            end_evt.record()
+            torch.cuda.synchronize()               # wait so elapsed_time is valid
+            ttft_runs.append(start_evt.elapsed_time(end_evt))  # ms
+        ttft_ms_avg = round(statistics.mean(ttft_runs), 2)
 
         # --- Timed Runs ---
         gpu_times_ms = []
@@ -117,10 +127,9 @@ def benchmark_model_on_prompt_cuda(model, tokenizer, prompt, generation_config_o
 
         results = {
             "prompt": prompt,
-            "status": "success",
-            "error_message": None,
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
+            "ttft_ms_avg": ttft_ms_avg,
             "avg_gpu_time_ms": round(avg_time_ms, 3),
             "stddev_gpu_time_ms": round(stddev_time_ms, 3),
             "tokens_per_sec": round(tokens_per_sec, 2),
@@ -153,7 +162,7 @@ def run_full_benchmark_cuda(output_filename="benchmark_results_cuda.json"):
 
     all_results = []
     device = "cuda"
-    benchmark_dtype = torch.float16 # Recommended dtype
+    benchmark_dtype = getattr(torch, config.get("benchmark_dtype", "float16")) # Recommended dtype
     print(f"--- Running CUDA Benchmark with dtype: {benchmark_dtype}, Batch Size: {BATCH_SIZE} ---")
 
     # --- HF Login ---
@@ -179,7 +188,12 @@ def run_full_benchmark_cuda(output_filename="benchmark_results_cuda.json"):
 
             print(f"Loading model {model_id} (dtype: {benchmark_dtype})...")
             
-            ### FIX LOADING THE MODEL, FIRST DOWNLOAD IN A SEPARATE FUNCTION, THEN RECORD LOADING TIME ###
+            # Preload model to ensure it is downloaded before timing
+            _ = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=benchmark_dtype).to(device) # Preload to ensure model is downloaded
+            torch.cuda.empty_cache() # Clear cache before loading to avoid memory issues
+            print(f"Model {model_id} downloaded, now loading to device...")
+            
+            # --- Load Model ---
             load_start = time.time()
             model = AutoModelForCausalLM.from_pretrained(
                 model_id, torch_dtype=benchmark_dtype
@@ -193,7 +207,7 @@ def run_full_benchmark_cuda(output_filename="benchmark_results_cuda.json"):
                 "model_id": model_id,
                 "benchmark_dtype": str(benchmark_dtype),
                 "batch_size": BATCH_SIZE,
-                "generation_config": current_generation_config.to_dict(),
+                # "generation_config": current_generation_config.to_dict(),
                 "num_global_warmup_runs": NUM_GLOBAL_WARMUP_RUNS,
                 "num_timed_runs_per_prompt": NUM_TIMED_RUNS_PER_PROMPT,
                 "model_load_time_s": round(model_load_time, 2),
@@ -205,7 +219,7 @@ def run_full_benchmark_cuda(output_filename="benchmark_results_cuda.json"):
             print(f"Running {NUM_GLOBAL_WARMUP_RUNS} global warm-up prompts...")
             for w_prompt in warm_prompts:
                 w_inputs = tokenizer(w_prompt, return_tensors="pt").to(device)
-                with torch.no_grad():
+                with torch.inference_mode():
                     _ = model.generate(**w_inputs, generation_config=current_generation_config) # Use potentially updated config
             torch.cuda.synchronize(device)
             print("Global warm-up complete.")
@@ -250,6 +264,7 @@ def run_full_benchmark_cuda(output_filename="benchmark_results_cuda.json"):
 
 # --- Run ---
 if __name__ == "__main__":
-    timestamp = time.strftime("%Y%m%d-%H%M%S")
-    output_file = f"llm_benchmark_results_cuda_{timestamp}.json"
-    run_full_benchmark_cuda(output_filename=output_file)
+    # timestamp = time.strftime("%Y%m%d-%H%M%S")
+    # output_file = f"llm_benchmark_results_cuda_{timestamp}.json"
+    # run_full_benchmark_cuda(output_filename=output_file)
+    save_generation_config(generation_config, "generation_config.json")
