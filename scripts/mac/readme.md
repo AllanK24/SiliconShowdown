@@ -55,7 +55,7 @@ Before running the benchmark for the first time, please ensure the following:
     *   Once the process is finished, press `Enter` in the Terminal window to close it.
     *   Inside the `mac` folder on your Desktop, you will find two JSON files:
         *   `system_info.json`
-        *   `benchmark_result_mps.json` (or a similar name for the benchmark results)
+        *   `results/benchmark_result_mps.json` (or a similar name for the benchmark results)
     *   Please **send us both of these `.json` files**.
 
 ---
