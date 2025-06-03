@@ -176,7 +176,7 @@ if (-not ($CheckVenv -eq "venv_exists")) {
     Write-Host "✅ Virtual environment is set up successfully."
 }
 
-# Copy the run_benchmark.py file into WSL (======add run_benchmark_tensorrt_llm.py as well later======)
+# Copy the run_benchmark.py file into WSL
 $BenchmarkScriptLocalPath = ".\run_benchmark.py"  # Change path if needed
 $BenchmarkScriptWSLPath = "/home/benchmark/benchmark_env/run_benchmark.py"
 
@@ -188,6 +188,33 @@ if (Test-Path $BenchmarkScriptLocalPath) {
     Write-Host "✅ run_benchmark.py copied successfully."
 } else {
     Write-Host "⚠️ Could not find run_benchmark.py in current directory. Skipping copy."
+}
+
+# Copy run_benchmark_tensorrt_llm.py into WSL
+$TensorRTScriptLocalPath = ".\run_benchmark_tensorrt_llm.py"
+$TensorRTScriptWSLPath = "/home/benchmark/benchmark_env/run_benchmark_tensorrt_llm.py"
+
+if (Test-Path $TensorRTScriptLocalPath) {
+    Write-Host "📋 Copying run_benchmark_tensorrt_llm.py into WSL benchmarking folder..."
+    wsl -d $Distro --user $WSLUser -- bash -c "rm -f $TensorRTScriptWSLPath"
+    wsl -d $Distro --user $WSLUser -- bash -c "cat > $TensorRTScriptWSLPath" < $TensorRTScriptLocalPath
+    wsl -d $Distro --user $WSLUser -- bash -c "chmod +x $TensorRTScriptWSLPath"
+    Write-Host "✅ run_benchmark_tensorrt_llm.py copied successfully."
+} else {
+    Write-Host "⚠️ Could not find run_benchmark_tensorrt_llm.py in current directory. Skipping copy."
+}
+
+# Copy config.yaml into WSL
+$ConfigYamlLocalPath = ".\config.yaml"
+$ConfigYamlWSLPath = "/home/benchmark/benchmark_env/config.yaml"
+
+if (Test-Path $ConfigYamlLocalPath) {
+    Write-Host "📋 Copying config.yaml into WSL benchmarking folder..."
+    wsl -d $Distro --user $WSLUser -- bash -c "rm -f $ConfigYamlWSLPath"
+    wsl -d $Distro --user $WSLUser -- bash -c "cat > $ConfigYamlWSLPath" < $ConfigYamlLocalPath
+    Write-Host "✅ config.yaml copied successfully."
+} else {
+    Write-Host "⚠️ Could not find config.yaml in current directory. Skipping copy."
 }
 
 # Copy collect_system_info.py into WSL
@@ -215,14 +242,23 @@ wsl -d $Distro --user $WSLUser -- bash -c "
     python3 /home/benchmark/benchmark_env/collect_system_info.py > /dev/null
 "
 
-# Copy result from WSL to Windows Desktop
-Write-Host "💾 Copying system_info_nvidia.json to Windows Desktop..."
+# Copy result from WSL to a results/ folder in the current script directory
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
+$ResultsDir = Join-Path $ScriptDir "results"
+$SystemInfoOutputWindows = Join-Path $ResultsDir "system_info_nvidia.json"
+
+# Create results folder if it doesn't exist
+if (-not (Test-Path $ResultsDir)) {
+    New-Item -ItemType Directory -Path $ResultsDir | Out-Null
+}
+
+Write-Host "💾 Copying system_info_nvidia.json to $ResultsDir..."
 wsl -d $Distro --user $WSLUser -- bash -c "
     cat $SystemInfoOutputWSL
 " > $SystemInfoOutputWindows
 
 if (Test-Path $SystemInfoOutputWindows) {
-    Write-Host "✅ system_info_nvidia.json saved to your Desktop."
+    Write-Host "✅ system_info_nvidia.json saved to results/ folder."
 } else {
     Write-Host "❌ Failed to save system_info_nvidia.json. Please check script output."
 }

@@ -18,7 +18,7 @@ from tensorrt_llm import LLM, SamplingParams
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 # Load config from YAML
-with open("scripts/nvidia/benchmark_py/config.yaml", "r") as f:
+with open("config.yaml", "r") as f:
     config = yaml.safe_load(f)
 
 # ---------- Model List (LLM Only) ----------
@@ -33,7 +33,7 @@ prompt_list = config["prompt_list"]
 NUM_TIMED_RUNS_PER_PROMPT = config["num_timed_runs_per_prompt"] # Number of repetitions for timing
 
 # ---------- Generation Config ----------
-with open("scripts/nvidia/generation_config.json", "r") as f:
+with open("generation_config.json", "r") as f:
     generation_config_data = json.load(f)
     
 generation_config = SamplingParams(
