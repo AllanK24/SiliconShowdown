@@ -22,7 +22,7 @@ with open("config.yaml", "r") as f:
     config = yaml.safe_load(f)
 
 # ---------- Model List (LLM Only) ----------
-model_list = config["model_list"]
+model_list = config["model_list_tensorrt_llm"]
 
 # ---------- Warm-up Prompts ----------
 warm_prompts = config["warm_prompts"]
@@ -33,14 +33,9 @@ prompt_list = config["prompt_list"]
 NUM_TIMED_RUNS_PER_PROMPT = config["num_timed_runs_per_prompt"] # Number of repetitions for timing
 
 # ---------- Generation Config ----------
-with open("generation_config.json", "r") as f:
-    generation_config_data = json.load(f)
-    
 generation_config = SamplingParams(
     max_tokens=config["max_new_tokens"],
-    temperature=config["temparature"],
-    top_k=generation_config_data.get("top_k"),
-    top_p=generation_config_data.get("top_p"),
+    temperature=0,
 )
 BATCH_SIZE = config["batch_size"]
 
@@ -70,9 +65,7 @@ def benchmark_model_on_prompt_tensorrt_llm(model, tokenizer, prompt, generation_
         # --- TTFT Runs ---
         ttft_config_obj = SamplingParams(
             max_tokens=1,
-            temperature=generation_config_data.get("temparature"),
-            top_k=generation_config_data.get("top_k"),
-            top_p=generation_config_data.get("top_p"),
+            temperature=0,
         )
         ttft_config_obj.max_tokens = 1  # No new tokens for TTFT
         ttft_runs = []

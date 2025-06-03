@@ -14,10 +14,11 @@ except Exception as e:
     print(f"pynvml initialization failed: {e}. Nvidia GPU temp/power monitoring disabled.")
 
 from huggingface_hub import login
-from transformers import AutoTokenizer, AutoModelForCausalLM, GenerationConfig
+from tensorrt_llm import LLM, SamplingParams
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 # Load config from YAML
-with open("scripts/nvidia/benchmark_py/config.yaml", "r") as f:
+with open("config.yaml", "r") as f:
     config = yaml.safe_load(f)
 
 # ---------- Model List (LLM Only) ----------
@@ -32,15 +33,16 @@ prompt_list = config["prompt_list"]
 NUM_TIMED_RUNS_PER_PROMPT = config["num_timed_runs_per_prompt"] # Number of repetitions for timing
 
 # ---------- Generation Config ----------
-generation_config = GenerationConfig(
-    **config["generation_config"],
+with open("generation_config.json", "r") as f:
+    generation_config_data = json.load(f)
+    
+generation_config = SamplingParams(
+    max_tokens=config["max_new_tokens"],
+    temperature=config["temparature"],
+    top_k=generation_config_data.get("top_k"),
+    top_p=generation_config_data.get("top_p"),
 )
-BATCH_SIZE = config["batch_size"] # Fixed batch size
-
-def save_generation_config(generation_config: GenerationConfig, filename="generation_config.json"):
-    """Saves the generation config to a JSON file."""
-    with open(filename, "w") as f:
-        json.dump(generation_config.to_dict(), f, indent=4)
+BATCH_SIZE = config["batch_size"]
 
 # ---------- NVML Helpers (Nvidia Specific) ----------
 def get_nvidia_gpu_details(device_id=0):
@@ -57,26 +59,33 @@ def get_nvidia_gpu_details(device_id=0):
         print(f"Warning: Unexpected error getting NVML details: {e}")
         return None, None
 
-# ---------- Benchmark Function (CUDA Specific - Per Prompt) ----------
-def benchmark_model_on_prompt_cuda(model, tokenizer, prompt, generation_config_obj, num_runs=3):
-    """Runs benchmark for a single prompt on CUDA, returns metrics dictionary."""
+# ---------- Benchmark Function (CUDA with TensorRT LLM - Per Prompt) ----------
+def benchmark_model_on_prompt_tensorrt_llm(model, tokenizer, prompt, generation_config_obj, num_runs=3):
+    """Runs benchmark for a single prompt on CUDA with TensorRT-LLM, returns metrics dictionary."""
     results = {}
     device = "cuda"
     try:
-        inputs = tokenizer(prompt, return_tensors="pt").to(device)
-        input_tokens = inputs.input_ids.shape[1]
+        inputs = tokenizer.encode(prompt)
         
         # --- TTFT Runs ---
+        ttft_config_obj = SamplingParams(
+            max_tokens=1,
+            temperature=generation_config_data.get("temparature"),
+            top_k=generation_config_data.get("top_k"),
+            top_p=generation_config_data.get("top_p"),
+        )
+        ttft_config_obj.max_tokens = 1  # No new tokens for TTFT
         ttft_runs = []
         for _ in range(num_runs):
             start_evt = torch.cuda.Event(enable_timing=True)
             end_evt   = torch.cuda.Event(enable_timing=True)
 
             start_evt.record()
-            with torch.inference_mode():
-                _ = model.generate(**inputs,
-                                max_new_tokens=1,
-                                do_sample=False)
+            _ = model.generate(
+                inputs=[inputs],
+                sampling_params=ttft_config_obj,
+                use_tqdm=True
+            )
             end_evt.record()
             torch.cuda.synchronize()               # wait so elapsed_time is valid
             ttft_runs.append(start_evt.elapsed_time(end_evt))  # ms
@@ -98,9 +107,12 @@ def benchmark_model_on_prompt_cuda(model, tokenizer, prompt, generation_config_o
             torch.cuda.synchronize(device)
             start_event.record()
 
-            with torch.inference_mode():
-                # Ensure generation_config is passed correctly
-                outputs = model.generate(**inputs, generation_config=generation_config_obj)
+            # Ensure generation_config is passed correctly
+            output = model.generate(
+                inputs=[inputs],
+                sampling_params=generation_config_obj,
+                use_tqdm=True
+            )
 
             end_event.record()
             torch.cuda.synchronize(device)
@@ -108,9 +120,10 @@ def benchmark_model_on_prompt_cuda(model, tokenizer, prompt, generation_config_o
             gpu_times_ms.append(iter_time_ms)
 
             if i == 0: # Decode only once
-                 actual_output_ids = outputs[0][inputs.input_ids.shape[1]:]
-                 generated_text = tokenizer.decode(actual_output_ids, skip_special_tokens=True)
-                 output_tokens = len(actual_output_ids) # Use actual generated length
+                input_tokens = len(inputs)  # Use original input length
+                actual_output_ids = output[0].outputs[0].token_ids
+                generated_text = output[0].outputs[0].text
+                output_tokens = len(actual_output_ids) # Use actual generated length
 
         temp_after, power_after = get_nvidia_gpu_details()
         peak_memory_mb = torch.cuda.max_memory_allocated(device) / (1024**2)
@@ -159,13 +172,13 @@ def benchmark_model_on_prompt_cuda(model, tokenizer, prompt, generation_config_o
     return results
 
 # ---------- Main Benchmark Runner (CUDA Specific) ----------
-def run_full_benchmark_cuda(output_filename="benchmark_results_cuda.json"):
-    """Runs LLM benchmarks for all models and prompts on CUDA, saving results."""
+def run_full_benchmark_tensorrt_llm(output_filename="benchmark_results_tensorrt_llm.json"):
+    """Runs LLM benchmarks for all models and prompts on CUDA using TensorRT-LLM, saving results."""
 
     all_results = []
     device = "cuda"
     benchmark_dtype = getattr(torch, config.get("benchmark_dtype", "float16")) # Recommended dtype
-    print(f"--- Running CUDA Benchmark with dtype: {benchmark_dtype}, Batch Size: {BATCH_SIZE} ---")
+    print(f"--- Running TensorRT-LLM Benchmark with dtype: {benchmark_dtype} ---")
 
     # --- HF Login ---
     try:
@@ -177,30 +190,27 @@ def run_full_benchmark_cuda(output_filename="benchmark_results_cuda.json"):
     # --- Loop through models ---
     for model_id in model_list:
         print(f"\n{'='*20} Benchmarking Model: {model_id} {'='*20}")
-        model, tokenizer, model_load_time = None, None, None
+        model, model_load_time = None, None
         current_model_params = {} # Store params for this model run
 
         try:
             # --- Load Model & Tokenizer ---
             print(f"Loading tokenizer {model_id}...")
             tokenizer = AutoTokenizer.from_pretrained(model_id, use_fast=True)
+            
+            # If needed, set padding token in current_generation_config, however, this is not always necessary
+            current_generation_config = generation_config
 
             print(f"Loading model {model_id} (dtype: {benchmark_dtype})...")
-            if "gemma" in model_id.lower():
-                benchmark_dtype = torch.bfloat16 # Gemma models use bfloat16
-            else:
-                benchmark_dtype = getattr(torch, config.get("benchmark_dtype", "float16"))
             
             # Preload model to ensure it is downloaded before timing
             _ = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=benchmark_dtype).to(device) # Preload to ensure model is downloaded
             torch.cuda.empty_cache() # Clear cache before loading to avoid memory issues
-            print(f"Model {model_id} downloaded, now loading to device...")
+            print(f"Model {model_id} downloaded, now loading with TensorRT-LLM...")
             
             # --- Load Model ---
             load_start = time.time()
-            model = AutoModelForCausalLM.from_pretrained(
-                model_id, torch_dtype=benchmark_dtype
-            ).to(device).eval()
+            model = LLM(model=model_id, tokenizer=model_id, trust_remote_code=True,) # Add dtype=
             load_end = time.time()
             model_load_time = load_end - load_start
             print(f"Model ready on {device} in {model_load_time:.2f} seconds.")
@@ -213,16 +223,19 @@ def run_full_benchmark_cuda(output_filename="benchmark_results_cuda.json"):
                 "num_global_warmup_runs": NUM_GLOBAL_WARMUP_RUNS,
                 "num_timed_runs_per_prompt": NUM_TIMED_RUNS_PER_PROMPT,
                 "model_load_time_s": round(model_load_time, 2),
-                "accelerator_used": "CUDA",
+                "accelerator_used": "CUDA + TensorRT-LLM",
                 "quantization_method": "None"
             }
 
             # --- Global Warm-up ---
             print(f"Running {NUM_GLOBAL_WARMUP_RUNS} global warm-up prompts...")
             for w_prompt in warm_prompts:
-                w_inputs = tokenizer(w_prompt, return_tensors="pt").to(device)
-                with torch.inference_mode():
-                    _ = model.generate(**w_inputs, generation_config=generation_config) # Use potentially updated config
+                w_inputs = tokenizer.encode(w_prompt)
+                model.generate(
+                    inputs=[w_inputs],
+                    sampling_params=current_generation_config,
+                    use_tqdm=True,
+                )
             torch.cuda.synchronize(device)
             print("Global warm-up complete.")
 
@@ -230,8 +243,8 @@ def run_full_benchmark_cuda(output_filename="benchmark_results_cuda.json"):
             for prompt_text in prompt_list:
                 print(f"--- Prompt: '{prompt_text[:50]}...' ---")
                 # Pass the potentially model-specific generation config
-                prompt_metrics = benchmark_model_on_prompt_cuda(
-                    model, tokenizer, prompt_text, generation_config,
+                prompt_metrics = benchmark_model_on_prompt_tensorrt_llm(
+                    model, tokenizer, prompt_text, current_generation_config,
                     num_runs=NUM_TIMED_RUNS_PER_PROMPT
                 )
 
@@ -261,12 +274,11 @@ def run_full_benchmark_cuda(output_filename="benchmark_results_cuda.json"):
             with open(output_filename, "w") as f:
                  json.dump(all_results, f, indent=4)
 
-    print(f"\nCUDA Benchmark run complete. Results: {output_filename}")
+    print(f"\nCUDA + TensorRT LLM Benchmark run complete. Results: {output_filename}")
     if NVML_AVAILABLE: pynvml.nvmlShutdown()
 
 # --- Run ---
 if __name__ == "__main__":
     timestamp = time.strftime("%Y%m%d-%H%M%S")
-    output_file = f"llm_benchmark_results_cuda_{timestamp}.json"
-    run_full_benchmark_cuda(output_filename=output_file)
-    save_generation_config(generation_config, "generation_config.json")
+    output_file = f"llm_benchmark_results_tensorrt_llm_{timestamp}.json"
+    run_full_benchmark_tensorrt_llm(output_filename=output_file)
