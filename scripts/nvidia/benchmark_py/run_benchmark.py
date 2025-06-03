@@ -17,7 +17,7 @@ from huggingface_hub import login
 from transformers import AutoTokenizer, AutoModelForCausalLM, GenerationConfig
 
 # Load config from YAML
-with open("scripts/nvidia/benchmark_py/configs/config_cuda.yaml", "r") as f:
+with open("scripts/nvidia/benchmark_py/config.yaml", "r") as f:
     config = yaml.safe_load(f)
 
 # ---------- Model List (LLM Only) ----------
@@ -127,6 +127,8 @@ def benchmark_model_on_prompt_cuda(model, tokenizer, prompt, generation_config_o
 
         results = {
             "prompt": prompt,
+            "status": "success",
+            "error_message": None,
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
             "ttft_ms_avg": ttft_ms_avg,

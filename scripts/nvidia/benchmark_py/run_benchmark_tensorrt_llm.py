@@ -37,7 +37,7 @@ with open("scripts/nvidia/generation_config.json", "r") as f:
     generation_config_data = json.load(f)
     
 generation_config = SamplingParams(
-    max_new_tokens=generation_config_data.get("max_new_tokens"),
+    max_tokens=generation_config_data.get("max_new_tokens"),
     temperature=generation_config_data.get("temparature"),
     top_k=generation_config_data.get("top_k"),
     top_p=generation_config_data.get("top_p"),
@@ -68,8 +68,13 @@ def benchmark_model_on_prompt_tensorrt_llm(model, tokenizer, prompt, generation_
         inputs = tokenizer.encode(prompt)
         
         # --- TTFT Runs ---
-        ttft_config_obj = generation_config_obj.copy()
-        ttft_config_obj.max_new_tokens = 1  # No new tokens for TTFT
+        ttft_config_obj = SamplingParams(
+            max_tokens=1,
+            temperature=generation_config_data.get("temparature"),
+            top_k=generation_config_data.get("top_k"),
+            top_p=generation_config_data.get("top_p"),
+        )
+        ttft_config_obj.max_tokens = 1  # No new tokens for TTFT
         ttft_runs = []
         for _ in range(num_runs):
             start_evt = torch.cuda.Event(enable_timing=True)
@@ -116,8 +121,8 @@ def benchmark_model_on_prompt_tensorrt_llm(model, tokenizer, prompt, generation_
 
             if i == 0: # Decode only once
                 input_tokens = len(inputs)  # Use original input length
-                actual_output_ids = output.outputs[0].token_ids
-                generated_text = output.outputs[0].text
+                actual_output_ids = output[0].outputs[0].token_ids
+                generated_text = output[0].outputs[0].text
                 output_tokens = len(actual_output_ids) # Use actual generated length
 
         temp_after, power_after = get_nvidia_gpu_details()
@@ -135,6 +140,8 @@ def benchmark_model_on_prompt_tensorrt_llm(model, tokenizer, prompt, generation_
 
         results = {
             "prompt": prompt,
+            "status": "success",
+            "error_message": None,
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
             "ttft_ms_avg": ttft_ms_avg,
@@ -273,5 +280,5 @@ def run_full_benchmark_tensorrt_llm(output_filename="benchmark_results_tensorrt_
 # --- Run ---
 if __name__ == "__main__":
     timestamp = time.strftime("%Y%m%d-%H%M%S")
-    output_file = f"llm_benchmark_results_cuda_{timestamp}.json"
-    
+    output_file = f"llm_benchmark_results_tensorrt_llm_{timestamp}.json"
+    run_full_benchmark_tensorrt_llm(output_filename=output_file)
