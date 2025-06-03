@@ -1,5 +1,5 @@
 # run_benchmark_tensorrt_llm.ps1
-# This script launches WSL, activates the virtual environment, and runs the benchmark.
+# This script launches WSL, activates the virtual environment, and runs the benchmark script for TensorRT-LLM models.
 
 $Distro = "Ubuntu"
 $WSLUser = "benchmark"

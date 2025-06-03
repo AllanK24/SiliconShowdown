@@ -37,8 +37,8 @@ with open("scripts/nvidia/generation_config.json", "r") as f:
     generation_config_data = json.load(f)
     
 generation_config = SamplingParams(
-    max_tokens=generation_config_data.get("max_new_tokens"),
-    temperature=generation_config_data.get("temparature"),
+    max_tokens=config["max_new_tokens"],
+    temperature=config["temparature"],
     top_k=generation_config_data.get("top_k"),
     top_p=generation_config_data.get("top_p"),
 )

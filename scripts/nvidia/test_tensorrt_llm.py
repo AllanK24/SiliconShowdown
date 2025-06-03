@@ -1,6 +1,8 @@
+import os
 from timeit import default_timer as timer
-from tensorrt_llm import LLM, SamplingParams
+from tensorrt_llm import LLM, SamplingParams, BuildConfig
 from transformers import AutoTokenizer
+from huggingface_hub import login
 
 def main():
     # prompts = [
@@ -10,11 +12,12 @@ def main():
     #     "Summarize the main plot points of the movie 'Inception'.",
     #     "What are the main differences between renewable and non-renewable energy sources?"
     # ]
+    login(token=os.environ.get("HF_TOKEN"))
     prompt = "Translate the following sentence to German: 'The weather is beautiful today.'"
-    tokenizer = AutoTokenizer.from_pretrained("HuggingFaceTB/SmolLM2-135M-Instruct", trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained("models/Llama-3.2-1B-Instruct", trust_remote_code=True, use_fast=True)
     token_ids = tokenizer.encode(prompt, add_special_tokens=True)
     sampling_params = SamplingParams(temperature=1.0, top_p=1.0, max_new_tokens=256)
-    llm = LLM(model="HuggingFaceTB/SmolLM2-135M-Instruct", tokenizer="HuggingFaceTB/SmolLM2-135M-Instruct", trust_remote_code=True)
+    llm = LLM(model="models/Llama-3.2-1B-Instruct_TensorRT-LLM_Engine", tokenizer="models/Llama-3.2-1B-Instruct", trust_remote_code=True)
     start_time = timer()
     outputs = llm.generate(
         inputs=[token_ids],

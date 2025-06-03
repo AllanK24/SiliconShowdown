@@ -185,10 +185,11 @@ def run_full_benchmark_cuda(output_filename="benchmark_results_cuda.json"):
             print(f"Loading tokenizer {model_id}...")
             tokenizer = AutoTokenizer.from_pretrained(model_id, use_fast=True)
 
-            # If needed, set padding token in current_generation_config, however, this is not always necessary
-            current_generation_config = generation_config
-
             print(f"Loading model {model_id} (dtype: {benchmark_dtype})...")
+            if "gemma" in model_id.lower():
+                benchmark_dtype = torch.bfloat16 # Gemma models use bfloat16
+            else:
+                benchmark_dtype = getattr(torch, config.get("benchmark_dtype", "float16"))
             
             # Preload model to ensure it is downloaded before timing
             _ = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=benchmark_dtype).to(device) # Preload to ensure model is downloaded
@@ -221,7 +222,7 @@ def run_full_benchmark_cuda(output_filename="benchmark_results_cuda.json"):
             for w_prompt in warm_prompts:
                 w_inputs = tokenizer(w_prompt, return_tensors="pt").to(device)
                 with torch.inference_mode():
-                    _ = model.generate(**w_inputs, generation_config=current_generation_config) # Use potentially updated config
+                    _ = model.generate(**w_inputs, generation_config=generation_config) # Use potentially updated config
             torch.cuda.synchronize(device)
             print("Global warm-up complete.")
 
@@ -230,7 +231,7 @@ def run_full_benchmark_cuda(output_filename="benchmark_results_cuda.json"):
                 print(f"--- Prompt: '{prompt_text[:50]}...' ---")
                 # Pass the potentially model-specific generation config
                 prompt_metrics = benchmark_model_on_prompt_cuda(
-                    model, tokenizer, prompt_text, current_generation_config,
+                    model, tokenizer, prompt_text, generation_config,
                     num_runs=NUM_TIMED_RUNS_PER_PROMPT
                 )
 
