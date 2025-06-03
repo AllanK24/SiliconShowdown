@@ -16,6 +16,8 @@
 * **Write a script that asks user if the cleaning up needed after benchmarking, and if yes, removes the benchmarking files including the WSL itself.** ✅
 * **Change setup_dev_env_wsl.ps1 script to also copy the TensorRT LLM benchmarking script, the `configs` dir and the `generation_config.json` to the WSL benchmarking directory.**
 * **Double check the paths everywhere to avoid errors with files not found.**
+* Adjust the requirements.txt file and requirements in setup_dev_env_wsl.ps1 script.
+* Test if Qwen3 works with TensorRT LLM.
 
 ## ------ Questions ------
 1. Temperature and hyperparams of LLM generation process

@@ -1,9 +1,9 @@
 # LLM Benchmark Configuration for CUDA
 
 model_list:
-  - Qwen/Qwen2.5-1.5B-Instruct
+  # - Qwen/Qwen2.5-1.5B-Instruct
   - google/gemma-3-1b-it
-  - meta-llama/Llama-3.2-1B-Instruct
+  # - meta-llama/Llama-3.2-1B-Instruct
 
 warm_prompts:
   - "Hello, how are you today?"

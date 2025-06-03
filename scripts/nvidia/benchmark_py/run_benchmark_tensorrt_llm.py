@@ -1,10 +1,9 @@
 import os
-import sys
+import time
+import yaml
 import json
 import torch
-import time
 import statistics
-import argparse # For specifying engine directory
 try:
     import pynvml
     pynvml.nvmlInit()
@@ -14,64 +13,39 @@ except Exception as e:
     NVML_AVAILABLE = False
     print(f"pynvml initialization failed: {e}. Nvidia GPU temp/power monitoring disabled.")
 
-# --- TensorRT-LLM ---
-try:
-    import tensorrt_llm
-    import tensorrt_llm.runtime as trt_runtime
-    from tensorrt_llm.runtime.generation import SamplingConfig # Or GenerationConfig if that's the class name
-    print(f"TensorRT-LLM version: {tensorrt_llm.__version__}")
-    TRT_LLM_AVAILABLE = True
-except ImportError:
-    print("ERROR: tensorrt_llm package not found. Please install it following Nvidia's documentation.")
-    TRT_LLM_AVAILABLE = False
-    sys.exit(1)
-
 from huggingface_hub import login
-from transformers import AutoTokenizer, GenerationConfig # Keep HF tokenizer and base GenerationConfig
+from tensorrt_llm import LLM, SamplingParams
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
-# ---------- Model List (Needs matching built engines) ----------
-model_list = [
-    # These IDs should correspond to folder names within your base engine directory
-    # AND you need the original HF model downloaded for the tokenizer
-    'google/gemma-1.1-2b-it',
-    'Qwen/Qwen1.5-1.8B-Chat',
-    'meta-llama/Meta-Llama-3.1-8B-Instruct',
-]
-# Corresponding HF model IDs if different from engine folder names (usually the same)
-hf_model_ids = {
-    'google/gemma-1.1-2b-it': 'google/gemma-1.1-2b-it',
-    'Qwen/Qwen1.5-1.8B-Chat': 'Qwen/Qwen1.5-1.8B-Chat',
-    'meta-llama/Meta-Llama-3.1-8B-Instruct': 'meta-llama/Meta-Llama-3.1-8B-Instruct',
-}
+# Load config from YAML
+with open("scripts/nvidia/benchmark_py/config.yaml", "r") as f:
+    config = yaml.safe_load(f)
 
+# ---------- Model List (LLM Only) ----------
+model_list = config["model_list"]
 
 # ---------- Warm-up Prompts ----------
-warm_prompts = [ "Hello?", "What is 1+1?", "Write a word." ] # Shorter warmups might suffice
+warm_prompts = config["warm_prompts"]
 NUM_GLOBAL_WARMUP_RUNS = len(warm_prompts)
 
 # ---------- Benchmark Prompts ----------
-prompt_list = [
-    "Translate the following sentence to German: 'The weather is beautiful today.'",
-    "Explain the concept of quantum entanglement in simple terms.",
-    "Write a python function that calculates the factorial of a number.",
-    "Summarize the main plot points of the movie 'Inception'.",
-    "What are the main differences between renewable and non-renewable energy sources?",
-]
-NUM_TIMED_RUNS_PER_PROMPT = 3
+prompt_list = config["prompt_list"]
+NUM_TIMED_RUNS_PER_PROMPT = config["num_timed_runs_per_prompt"] # Number of repetitions for timing
 
-# ---------- Generation Config (Base - map to TRT later) ----------
-MAX_NEW_TOKENS = 512
-# We'll use this to configure TRT's SamplingConfig
-hf_generation_config = GenerationConfig(
-    max_new_tokens=MAX_NEW_TOKENS,
-    do_sample=False,
-    # TRT doesn't use pad_token_id directly in the same way usually
+# ---------- Generation Config ----------
+with open("scripts/nvidia/generation_config.json", "r") as f:
+    generation_config_data = json.load(f)
+    
+generation_config = SamplingParams(
+    max_new_tokens=generation_config_data.get("max_new_tokens"),
+    temperature=generation_config_data.get("temparature"),
+    top_k=generation_config_data.get("top_k"),
+    top_p=generation_config_data.get("top_p"),
 )
-BATCH_SIZE = 1 # Fixed batch size
+BATCH_SIZE = config["batch_size"]
 
-# ---------- NVML Helpers (Same as CUDA script) ----------
+# ---------- NVML Helpers (Nvidia Specific) ----------
 def get_nvidia_gpu_details(device_id=0):
-    # ... (Keep the exact same function as in the CUDA script) ...
     if not NVML_AVAILABLE: return None, None
     try:
         handle = pynvml.nvmlDeviceGetHandleByIndex(device_id)
@@ -85,18 +59,32 @@ def get_nvidia_gpu_details(device_id=0):
         print(f"Warning: Unexpected error getting NVML details: {e}")
         return None, None
 
-# ---------- Benchmark Function (TensorRT Specific - Per Prompt) ----------
-def benchmark_model_on_prompt_trt(trt_session, tokenizer, prompt, sampling_config, num_runs=3):
-    """Runs benchmark for a single prompt using TensorRT-LLM session."""
+# ---------- Benchmark Function (CUDA with TensorRT LLM - Per Prompt) ----------
+def benchmark_model_on_prompt_tensorrt_llm(model, tokenizer, prompt, generation_config_obj, num_runs=3):
+    """Runs benchmark for a single prompt on CUDA with TensorRT-LLM, returns metrics dictionary."""
     results = {}
-    device = "cuda" # TRT runs on CUDA
+    device = "cuda"
     try:
-        # --- Prepare inputs ---
-        # TRT-LLM usually expects input_ids as a list or numpy array for batch=1
-        # Or a padded tensor for batch > 1
-        input_ids = tokenizer.encode(prompt, return_tensors=None, add_special_tokens=False) # Get list of IDs
-        input_lengths = torch.tensor([len(input_ids)], dtype=torch.int32, device=device)
-        input_ids_tensor = torch.tensor([input_ids], dtype=torch.int32, device=device) # Make it [1, seq_len]
+        inputs = tokenizer.encode(prompt)
+        
+        # --- TTFT Runs ---
+        ttft_config_obj = generation_config_obj.copy()
+        ttft_config_obj.max_new_tokens = 1  # No new tokens for TTFT
+        ttft_runs = []
+        for _ in range(num_runs):
+            start_evt = torch.cuda.Event(enable_timing=True)
+            end_evt   = torch.cuda.Event(enable_timing=True)
+
+            start_evt.record()
+            _ = model.generate(
+                inputs=[inputs],
+                sampling_params=ttft_config_obj,
+                use_tqdm=True
+            )
+            end_evt.record()
+            torch.cuda.synchronize()               # wait so elapsed_time is valid
+            ttft_runs.append(start_evt.elapsed_time(end_evt))  # ms
+        ttft_ms_avg = round(statistics.mean(ttft_runs), 2)
 
         # --- Timed Runs ---
         gpu_times_ms = []
@@ -104,9 +92,7 @@ def benchmark_model_on_prompt_trt(trt_session, tokenizer, prompt, sampling_confi
         generated_text = ""
 
         torch.cuda.synchronize(device)
-        # Peak memory from PyTorch allocator might be less relevant/accurate for TRT
-        # TRT engine has its own memory footprint + activation memory managed potentially outside torch
-        torch.cuda.reset_peak_memory_stats(device)
+        torch.cuda.reset_peak_memory_stats(device) # Reset before the runs for this prompt
 
         temp_before, power_before = get_nvidia_gpu_details()
 
@@ -116,60 +102,49 @@ def benchmark_model_on_prompt_trt(trt_session, tokenizer, prompt, sampling_confi
             torch.cuda.synchronize(device)
             start_event.record()
 
-            # --- TRT-LLM Inference Call ---
-            # The exact API might vary slightly based on tensorrt_llm version
-            # Assumes 'decode' or similar method handles generation loop internally
-            # Pass input_ids as tensor, input_lengths tensor, and SamplingConfig
-            trt_outputs = trt_session.generate(
-                 input_ids=input_ids_tensor,
-                 input_lengths=input_lengths,
-                 sampling_config=sampling_config,
-                 # Might need max_new_tokens here too depending on API version
+            # Ensure generation_config is passed correctly
+            output = model.generate(
+                inputs=[inputs],
+                sampling_params=generation_config_obj,
+                use_tqdm=True
             )
-            # --- End Inference ---
 
             end_event.record()
             torch.cuda.synchronize(device)
             iter_time_ms = start_event.elapsed_time(end_event)
             gpu_times_ms.append(iter_time_ms)
 
-            # Decode output only once - Check trt_outputs structure
-            # It might return output IDs directly, potentially including input IDs
-            if i == 0:
-                # Assuming trt_outputs['output_ids'] gives shape [batch_size, beam_width, seq_len]
-                # For batch=1, beam=1 -> [1, 1, seq_len]
-                output_ids_tensor = trt_outputs['output_ids'][0, 0]
-                # Exclude input tokens if they are included in the output
-                # Note: Some TRT setups might only return *new* tokens
-                # Verify the behavior of your specific engine build/runtime version!
-                start_index = input_ids_tensor.shape[1] # Index after input tokens
-                actual_output_ids_tensor = output_ids_tensor[start_index:]
-                output_tokens = len(actual_output_ids_tensor)
-                generated_text = tokenizer.decode(actual_output_ids_tensor, skip_special_tokens=True)
-
+            if i == 0: # Decode only once
+                input_tokens = len(inputs)  # Use original input length
+                actual_output_ids = output.outputs[0].token_ids
+                generated_text = output.outputs[0].text
+                output_tokens = len(actual_output_ids) # Use actual generated length
 
         temp_after, power_after = get_nvidia_gpu_details()
-        # Report torch peak memory, but be aware it might not capture all TRT usage
-        peak_torch_memory_mb = torch.cuda.max_memory_allocated(device) / (1024**2)
+        peak_memory_mb = torch.cuda.max_memory_allocated(device) / (1024**2)
 
         # --- Calculate Aggregated Metrics ---
         avg_time_ms = statistics.mean(gpu_times_ms) if gpu_times_ms else 0
         stddev_time_ms = statistics.stdev(gpu_times_ms) if len(gpu_times_ms) > 1 else 0
         tokens_per_sec = (output_tokens / (avg_time_ms / 1000.0)) if avg_time_ms > 0 else 0
+
+        # Calculate temp/power stats (handle None values)
         avg_temp_c = (temp_before + temp_after) / 2 if temp_before is not None and temp_after is not None else None
         temp_increase_c = temp_after - temp_before if temp_before is not None and temp_after is not None else None
         avg_power_w = (power_before + power_after) / 2 if power_before is not None and power_after is not None else None
 
         results = {
-            "prompt": prompt, "status": "success", "error_message": None,
-            "input_tokens": len(input_ids), # Use original list length
+            "prompt": prompt,
+            "input_tokens": input_tokens,
             "output_tokens": output_tokens,
+            "ttft_ms_avg": ttft_ms_avg,
             "avg_gpu_time_ms": round(avg_time_ms, 3),
             "stddev_gpu_time_ms": round(stddev_time_ms, 3),
             "tokens_per_sec": round(tokens_per_sec, 2),
             "runs_gpu_time_ms": [round(t, 3) for t in gpu_times_ms],
-            "peak_torch_gpu_memory_mb": round(peak_torch_memory_mb, 2) if peak_torch_memory_mb is not None else None, # Note: PyTorch allocated only
-            "temp_before_c": temp_before, "temp_after_c": temp_after,
+            "peak_gpu_memory_mb": round(peak_memory_mb, 2) if peak_memory_mb is not None else None,
+            "temp_before_c": temp_before,
+            "temp_after_c": temp_after,
             "avg_temp_c": round(avg_temp_c, 1) if avg_temp_c is not None else None,
             "temp_increase_c": round(temp_increase_c, 1) if temp_increase_c is not None else None,
             "power_before_w": round(power_before, 2) if power_before is not None else None,
@@ -179,138 +154,94 @@ def benchmark_model_on_prompt_trt(trt_session, tokenizer, prompt, sampling_confi
         }
 
     except Exception as e:
-        print(f"ERROR during TRT benchmark for prompt: '{prompt[:50]}...' - {e}")
-        # Attempt to get current memory/temp even on error if possible
+        print(f"ERROR during benchmark for prompt: '{prompt[:50]}...' - {e}")
         peak_memory_mb_err = torch.cuda.max_memory_allocated(device) / (1024**2) if torch.cuda.is_available() else None
         temp_err, power_err = get_nvidia_gpu_details()
         results = {
             "prompt": prompt, "status": "failed", "error_message": str(e),
-            "peak_torch_gpu_memory_mb_on_error": round(peak_memory_mb_err, 2) if peak_memory_mb_err is not None else None,
+            "peak_gpu_memory_mb_on_error": round(peak_memory_mb_err, 2) if peak_memory_mb_err is not None else None,
             "temp_on_error": temp_err, "power_on_error": power_err,
         }
     return results
 
-# ---------- Main Benchmark Runner (TensorRT Specific) ----------
-def run_full_benchmark_trt(engine_dir_base, output_filename="benchmark_results_trt.json"):
-    """Runs TRT-LLM benchmarks for all models/prompts, saving results."""
-    if not TRT_LLM_AVAILABLE:
-        print("TensorRT-LLM is not available. Exiting.")
-        return
+# ---------- Main Benchmark Runner (CUDA Specific) ----------
+def run_full_benchmark_tensorrt_llm(output_filename="benchmark_results_tensorrt_llm.json"):
+    """Runs LLM benchmarks for all models and prompts on CUDA using TensorRT-LLM, saving results."""
 
     all_results = []
     device = "cuda"
-    # Dtype is typically determined during engine build, we record it
-    benchmark_dtype = "float16" # Assuming FP16 engines, adjust if using others
-    print(f"--- Running TensorRT Benchmark (Assumed {benchmark_dtype}), Batch Size: {BATCH_SIZE} ---")
-    print(f"--- Looking for engines in subdirs of: {engine_dir_base} ---")
+    benchmark_dtype = getattr(torch, config.get("benchmark_dtype", "float16")) # Recommended dtype
+    print(f"--- Running TensorRT-LLM Benchmark with dtype: {benchmark_dtype} ---")
 
-
-    # --- HF Login (for tokenizer) ---
+    # --- HF Login ---
     try:
-        token = os.environ.get("HF_TOKEN")
+        token = os.getenv("HF_TOKEN")
         if token: login(token=token); print("Logged in.")
         else: print("HF_TOKEN not set. Ensure models cached/public.")
     except Exception as e: print(f"Login failed: {e}")
 
-    # --- Loop through models (engine subdirs) ---
-    for model_subdir_name in model_list: # Use model_list to find engine dirs and tokenizers
-        print(f"\n{'='*20} Benchmarking Model Engine: {model_subdir_name} {'='*20}")
-
-        # Construct path to the pre-built engine directory
-        # Assumes structure like: <engine_dir_base>/<model_subdir_name>/fp16/1-gpu/
-        engine_path = os.path.join(engine_dir_base, model_subdir_name, "fp16", "1-gpu") # Adjust path structure if needed
-
-        if not os.path.isdir(engine_path):
-            print(f"ERROR: Engine directory not found: {engine_path}. Skipping model.")
-            all_results.append({ "model_id": model_subdir_name, "status": "engine_not_found", "engine_path_searched": engine_path })
-            continue
-
-        trt_session, tokenizer = None, None
-        engine_load_time = None
-        current_model_params = {}
+    # --- Loop through models ---
+    for model_id in model_list:
+        print(f"\n{'='*20} Benchmarking Model: {model_id} {'='*20}")
+        model, model_load_time = None, None
+        current_model_params = {} # Store params for this model run
 
         try:
-            # --- Load Tokenizer ---
-            hf_model_id = hf_model_ids[model_subdir_name] # Get HF ID for tokenizer
-            print(f"Loading tokenizer for {hf_model_id}...")
-            tokenizer = AutoTokenizer.from_pretrained(hf_model_id, use_fast=True, padding_side='left') # TRT often prefers left padding
-            # Ensure pad token exists for tokenizer if needed by specific logic
-            if tokenizer.pad_token is None:
-                tokenizer.pad_token = tokenizer.eos_token
-                print("Set tokenizer pad_token to eos_token.")
+            # --- Load Model & Tokenizer ---
+            print(f"Loading tokenizer {model_id}...")
+            tokenizer = AutoTokenizer.from_pretrained(model_id, use_fast=True)
+            
+            # If needed, set padding token in current_generation_config, however, this is not always necessary
+            current_generation_config = generation_config
 
-            # --- Load TRT Engine & Create Session ---
-            print(f"Loading TRT engine from: {engine_path}...")
+            print(f"Loading model {model_id} (dtype: {benchmark_dtype})...")
+            
+            # Preload model to ensure it is downloaded before timing
+            _ = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=benchmark_dtype).to(device) # Preload to ensure model is downloaded
+            torch.cuda.empty_cache() # Clear cache before loading to avoid memory issues
+            print(f"Model {model_id} downloaded, now loading with TensorRT-LLM...")
+            
+            # --- Load Model ---
             load_start = time.time()
-            # You might need to load config.json from the engine dir first
-            # Adjust runtime mapping based on your setup (GPU rank)
-            runtime_mapping = tensorrt_llm.Mapping(world_size=1, rank=0, gpus=list(range(1))) # Single GPU
-
-            # Example loading - API might change slightly
-            # Need engine path and tokenizer
-            trt_session = trt_runtime.GenerationSession.from_dir(
-                 engine_dir=engine_path,
-                 tokenizer=tokenizer, # Pass tokenizer for potential internal use
-                 runtime_mapping=runtime_mapping,
-                 # stream = torch.cuda.current_stream() # Optional stream management
-            )
-
+            model = LLM(model=model_id, tokenizer=model_id, trust_remote_code=True,) # Add dtype=
             load_end = time.time()
-            engine_load_time = load_end - load_start
-            print(f"TRT session ready in {engine_load_time:.2f} seconds.")
+            model_load_time = load_end - load_start
+            print(f"Model ready on {device} in {model_load_time:.2f} seconds.")
 
-            # --- Configure TRT Sampling/Generation ---
-            # Map HF GenerationConfig to TRT SamplingConfig
-            sampling_config = trt_runtime.SamplingConfig(
-                end_id=tokenizer.eos_token_id,
-                pad_id=tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id,
-                # For greedy search (do_sample=False):
-                num_beams=1, # Must be 1 for greedy
-                # top_k=1, # Often implicit with beam=1, but can be set
-                # top_p=1.0, # Ensure sampling is off
-                # temperature=1.0, # Usually ignored for greedy
-            )
-            # Note: max_new_tokens is often passed to the generate call itself in TRT-LLM
-
-            # --- Record Benchmark Parameters ---
+            # --- Record Benchmark Parameters for this model ---
             current_model_params = {
-                "model_id": model_subdir_name, # Use engine name/HF ID
-                "benchmark_dtype": benchmark_dtype, # From assumption/build
+                "model_id": model_id,
+                "benchmark_dtype": str(benchmark_dtype),
                 "batch_size": BATCH_SIZE,
-                "generation_config": hf_generation_config.to_dict(), # Store base HF config for reference
-                "trt_sampling_config": sampling_config.__dict__, # Store TRT config used
                 "num_global_warmup_runs": NUM_GLOBAL_WARMUP_RUNS,
                 "num_timed_runs_per_prompt": NUM_TIMED_RUNS_PER_PROMPT,
-                "engine_load_time_s": round(engine_load_time, 2),
-                "accelerator_used": "TensorRT",
-                "quantization_method": "None", # Or specify if engine is quantized
-                "engine_path": engine_path
+                "model_load_time_s": round(model_load_time, 2),
+                "accelerator_used": "CUDA + TensorRT-LLM",
+                "quantization_method": "None"
             }
 
-            # --- Global Warm-up (TRT Session) ---
+            # --- Global Warm-up ---
             print(f"Running {NUM_GLOBAL_WARMUP_RUNS} global warm-up prompts...")
             for w_prompt in warm_prompts:
-                 w_input_ids = tokenizer.encode(w_prompt, return_tensors=None, add_special_tokens=False)
-                 w_input_lengths = torch.tensor([len(w_input_ids)], dtype=torch.int32, device=device)
-                 w_input_ids_tensor = torch.tensor([w_input_ids], dtype=torch.int32, device=device)
-                 _ = trt_session.generate(
-                     input_ids=w_input_ids_tensor,
-                     input_lengths=w_input_lengths,
-                     sampling_config=sampling_config,
-                     max_new_tokens=16 # Generate few tokens for warmup
-                 )
+                w_inputs = tokenizer.encode(w_prompt)
+                model.generate(
+                    inputs=[w_inputs],
+                    sampling_params=current_generation_config,
+                    use_tqdm=True,
+                )
             torch.cuda.synchronize(device)
             print("Global warm-up complete.")
 
             # --- Benchmark each prompt ---
             for prompt_text in prompt_list:
                 print(f"--- Prompt: '{prompt_text[:50]}...' ---")
-                prompt_metrics = benchmark_model_on_prompt_trt(
-                    trt_session, tokenizer, prompt_text, sampling_config,
+                # Pass the potentially model-specific generation config
+                prompt_metrics = benchmark_model_on_prompt_tensorrt_llm(
+                    model, tokenizer, prompt_text, current_generation_config,
                     num_runs=NUM_TIMED_RUNS_PER_PROMPT
                 )
 
-                # Combine model parameters with prompt metrics
+                # Combine model parameters with prompt metrics for final record
                 final_record = {**current_model_params, **prompt_metrics}
                 all_results.append(final_record)
 
@@ -319,43 +250,28 @@ def run_full_benchmark_trt(engine_dir_base, output_filename="benchmark_results_t
                     json.dump(all_results, f, indent=4)
 
         except Exception as e:
-            print(f"FATAL ERROR for model engine {model_subdir_name}: {e}")
+            print(f"FATAL ERROR for model {model_id}: {e}")
             all_results.append({
-                **current_model_params,
-                "prompt": "LOAD_OR_SETUP_FAILURE", "status": "load_or_setup_failed",
-                "error_message": str(e), "engine_path_searched": engine_path
+                **current_model_params, # Include params even on failure if available
+                "prompt": "LOAD_OR_SETUP_FAILURE",
+                "status": "load_or_setup_failed",
+                "error_message": str(e),
             })
         finally:
-            # --- Cleanup TRT session ---
-            print(f"Cleaning up TRT resources for {model_subdir_name}...")
-            del trt_session # Important to release TRT resources
-            del tokenizer
+            # --- Cleanup ---
+            print(f"Cleaning up {model_id}...")
+            del model; del tokenizer
             torch.cuda.empty_cache()
             print("Cleanup complete.")
             # Save final results again
             with open(output_filename, "w") as f:
                  json.dump(all_results, f, indent=4)
 
-    print(f"\nTensorRT Benchmark run complete. Results: {output_filename}")
+    print(f"\nCUDA + TensorRT LLM Benchmark run complete. Results: {output_filename}")
     if NVML_AVAILABLE: pynvml.nvmlShutdown()
 
 # --- Run ---
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run TensorRT-LLM Benchmark")
-    parser.add_argument(
-        "--engine_dir", type=str, required=True,
-        help="Base directory containing the pre-built TensorRT-LLM engine subdirectories (e.g., ./trt_engines)"
-    )
-    parser.add_argument(
-        "--output_file", type=str, default=None,
-        help="Optional: Specify output JSON filename."
-    )
-    args = parser.parse_args()
-
     timestamp = time.strftime("%Y%m%d-%H%M%S")
-    output_file = args.output_file or f"llm_benchmark_results_trt_{timestamp}.json"
-
-    if not os.path.isdir(args.engine_dir):
-        print(f"ERROR: Specified engine directory does not exist: {args.engine_dir}")
-    else:
-        run_full_benchmark_trt(engine_dir_base=args.engine_dir, output_filename=output_file)
+    output_file = f"llm_benchmark_results_cuda_{timestamp}.json"
+    
