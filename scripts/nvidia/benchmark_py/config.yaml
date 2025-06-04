@@ -1,0 +1,37 @@
+# LLM Benchmark Configuration for CUDA
+
+model_list:
+  - Qwen/Qwen2.5-1.5B-Instruct
+  - google/gemma-3-1b-it
+  - meta-llama/Llama-3.2-1B-Instruct
+
+model_list_tensorrt_llm:
+  - models/qwen/Qwen2.5-1.5B-Instruct_TensorRT-LLM
+  - models/gemma/gemma-3-1b-it_TensorRT-LLM
+  - models/llama/Llama-3.2-1B-Instruct_TensorRT-LLM
+
+warm_prompts:
+  - "Hello, how are you today?"
+  - "What is the capital of France?"
+  - "Write a short poem about clouds."
+
+prompt_list:
+  - "Translate the following sentence to German: 'The weather is beautiful today.'"
+  - "Explain the concept of quantum entanglement in simple terms."
+  - "Write a python function that calculates the factorial of a number."
+  - "Summarize the main plot points of the movie 'Inception'."
+  - "What are the main differences between renewable and non-renewable energy sources?"
+
+num_timed_runs_per_prompt: 3
+
+generation_config:
+  temperature: null
+  top_k: null
+  top_p: null
+  max_new_tokens: 256
+  do_sample: false
+
+batch_size: 1
+
+# Advanced/optional settings
+benchmark_dtype: float16

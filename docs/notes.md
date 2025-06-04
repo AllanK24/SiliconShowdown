@@ -11,11 +11,12 @@
 
 ## ------ WSL Notes ------
 * **Before making inference, allow WSL to use maximum memory** ✅
-* **We need to ship the python benchmarking files in the same folder as the installation and setup scripts, because the benchmarking python files will be copied to the WSL benchmarking directory during the installation process in `setup_dev_env_wsl.ps1` script.**
-* Add run_benchmark_tensorrt_llm.py to the list of files to be copied to the WSL benchmarking directory in `setup_dev_env_wsl.ps1` script.
+* **We need to ship the python benchmarking files in the same folder as the installation and setup scripts, because the benchmarking python files will be copied to the WSL benchmarking directory during the installation process in `setup_dev_env_wsl.ps1` script.** ✅
+* Add run_benchmark_tensorrt_llm.py to the list of files to be copied to the WSL benchmarking directory in `setup_dev_env_wsl.ps1` script. ✅
 * **Write a script that asks user if the cleaning up needed after benchmarking, and if yes, removes the benchmarking files including the WSL itself.** ✅
-* **Change setup_dev_env_wsl.ps1 script to also copy the TensorRT LLM benchmarking script, the `configs` dir and the `generation_config.json` to the WSL benchmarking directory.**
-* **Double check the paths everywhere to avoid errors with files not found.**
+* **Change setup_dev_env_wsl.ps1 script to also copy the TensorRT LLM benchmarking script, the `configs` dir and the `generation_config.json` to the WSL benchmarking directory.** ✅
+* **Double check the paths everywhere to avoid errors with files not found.** ✅
+* Adjust the requirements.txt file and requirements in setup_dev_env_wsl.ps1 script. ✅
 
 ## ------ Questions ------
 1. Temperature and hyperparams of LLM generation process

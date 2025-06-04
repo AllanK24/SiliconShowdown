@@ -8,7 +8,8 @@ benchmarks
 TensorRT-LLM
 models/
 scripts/mac/environment/ai_benchmark_env
-scripts/mac/RunBenchmark.app
-scripts/mac/RunCleanup.app
+scripts/mac/Run Benchmark.app
+scripts/mac/Run Cleanup.app
+=======
 .env
-scripts/mac/benchmark/results
+>>>>>>> 2140b48f5a2bbc9471c56bd6f856f992e95fbcab

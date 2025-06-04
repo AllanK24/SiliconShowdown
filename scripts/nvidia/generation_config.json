@@ -67,5 +67,5 @@
     "disable_compile": false,
     "generation_kwargs": {},
     "_from_model_config": false,
-    "transformers_version": "4.52.4"
+    "transformers_version": "4.51.0"
 }
