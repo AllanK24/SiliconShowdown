@@ -55,6 +55,16 @@ def get_nvidia_gpu_details(device_id=0):
     except Exception as e:
         print(f"Warning: Unexpected error getting NVML details: {e}")
         return None, None
+    
+def get_nvidia_energy_j(device_id=0):
+    if not NVML_AVAILABLE: return None
+    try:
+        handle = pynvml.nvmlDeviceGetHandleByIndex(device_id)
+        # Returns mJ since last driver load
+        energy_mJ = pynvml.nvmlDeviceGetTotalEnergyConsumption(handle)
+        return energy_mJ / 1000.0
+    except Exception:
+        return None
 
 # ---------- Benchmark Function (CUDA with TensorRT LLM - Per Prompt) ----------
 def benchmark_model_on_prompt_tensorrt_llm(model, tokenizer, prompt, generation_config_obj, num_runs=3):
@@ -90,6 +100,7 @@ def benchmark_model_on_prompt_tensorrt_llm(model, tokenizer, prompt, generation_
 
         # --- Timed Runs ---
         gpu_times_ms = []
+        energy_runs_j = [] 
         output_tokens = 0
         generated_text = ""
 
@@ -99,6 +110,8 @@ def benchmark_model_on_prompt_tensorrt_llm(model, tokenizer, prompt, generation_
         temp_before, power_before = get_nvidia_gpu_details()
 
         for i in range(num_runs):
+            energy_start = get_nvidia_energy_j()
+            
             start_event = torch.cuda.Event(enable_timing=True)
             end_event = torch.cuda.Event(enable_timing=True)
             torch.cuda.synchronize(device)
@@ -115,6 +128,10 @@ def benchmark_model_on_prompt_tensorrt_llm(model, tokenizer, prompt, generation_
             torch.cuda.synchronize(device)
             iter_time_ms = start_event.elapsed_time(end_event)
             gpu_times_ms.append(iter_time_ms)
+            
+            energy_end = get_nvidia_energy_j()
+            if None not in (energy_start, energy_end):
+                energy_runs_j.append(energy_end - energy_start)
 
             if i == 0: # Decode only once
                 input_tokens = len(inputs)  # Use original input length
@@ -134,6 +151,14 @@ def benchmark_model_on_prompt_tensorrt_llm(model, tokenizer, prompt, generation_
         avg_temp_c = (temp_before + temp_after) / 2 if temp_before is not None and temp_after is not None else None
         temp_increase_c = temp_after - temp_before if temp_before is not None and temp_after is not None else None
         avg_power_w = (power_before + power_after) / 2 if power_before is not None and power_after is not None else None
+        
+        # Get Energy Consumption in Joules
+        avg_energy_consumption_j = (
+            statistics.mean(energy_runs_j) if energy_runs_j else None
+        )
+        total_energy_j = (
+            sum(energy_runs_j) if energy_runs_j else None
+        )
 
         results = {
             "prompt": prompt,
@@ -150,10 +175,12 @@ def benchmark_model_on_prompt_tensorrt_llm(model, tokenizer, prompt, generation_
             "gpu_temp_before_c": temp_before,
             "gpu_temp_after_c": temp_after,
             "gpu_temp_delta_c": round(avg_temp_c, 1) if avg_temp_c is not None else None,
-            "temp_increase_c": round(temp_increase_c, 1) if temp_increase_c is not None else None,
+            "gpu_temp_increase_c": round(temp_increase_c, 1) if temp_increase_c is not None else None,
             "power_before_w": round(power_before, 2) if power_before is not None else None,
             "power_after_w": round(power_after, 2) if power_after is not None else None,
-            "avg_power_during_inference_w": round(avg_power_w, 2) if avg_power_w is not None else None,
+            "avg_power_w": round(avg_power_w, 2) if avg_power_w is not None else None,
+            "avg_energy_consumption_j": round(avg_energy_consumption_j, 2) if avg_energy_consumption_j else None,
+            "total_energy_j": round(total_energy_j, 2) if total_energy_j else None,
             "output_text_preview": generated_text[:100] + "..."
         }
 
