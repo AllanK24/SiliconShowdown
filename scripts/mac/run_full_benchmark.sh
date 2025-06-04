@@ -23,23 +23,30 @@ read -r USER_CONFIRMATION_PREREQS
 echo "-------------------------------------------"
 
 INSTALL_SCRIPT_NAME="install_mac.sh"
+CLEANUP_SCRIPT_NAME="cleanup.sh"
+CLEANUP_APP_NAME="RunCleanup.app"
 COLLECT_INFO_SCRIPT="environment/collect_system_info.py" # Assuming you have this
 MPS_BENCHMARK_SCRIPT="benchmark/benchmark_mps.py"
 MLX_BENCHMARK_SCRIPT="benchmark/benchmark_mlx.py"
 
 # Function to remove quarantine attribute
 remove_quarantine() {
-    local file_path="$1"
-    if [ -f "$file_path" ]; then
-        echo "Attempting to remove quarantine attribute from $file_path..."
-        xattr -c "$file_path" || echo "Warning: xattr -c for $file_path failed (file might not have it), but continuing."
+    local item_path="$1"
+    # Check if the item exists (can be a file or directory)
+    if [ -e "$item_path" ]; then # -e checks for existence (file, directory, symlink, etc.)
+        echo "Attempting to remove quarantine attributes recursively from $item_path..."
+        # -r makes it recursive (good for .app bundles), -c clears all xattrs
+        xattr -rd com.apple.quarantine "$item_path" > /dev/null 2>&1 || true
+        echo "Attempted to remove quarantine from $item_path (if present)." # More neutral message
     else
-        echo "Warning: $file_path not found for xattr removal check."
+        echo "Warning: $item_path not found for xattr removal check."
     fi
 }
 
 # Remove quarantine from the installer
 remove_quarantine "$INSTALL_SCRIPT_NAME"
+remove_quarantine "$CLEANUP_SCRIPT_NAME"
+remove_quarantine "$CLEANUP_APP_NAME"
 # Python scripts are run by the python interpreter, so xattr on them is less critical
 # if the interpreter itself is trusted and the .app wrapper was allowed.
 # However, no harm in being thorough if issues arise.

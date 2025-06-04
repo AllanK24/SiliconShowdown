@@ -47,7 +47,7 @@ max_new_tokens_cfg = cfg["generation"]["max_new_tokens"]
 # Temperature > 0 implies sampling. temp=0.0 aims for deterministic.
 # We will set temp based on do_sample. If do_sample is false, use temp=0.0.
 do_sample_cfg = cfg["generation"]["do_sample"]
-generation_temp_cfg = cfg.get("generation", {}).get("temperature", 0.7) # Default if not in config
+generation_temp_cfg = cfg.get("generation", {}).get("temperature", 0.0) # Default if not in config
 if not do_sample_cfg:
     generation_temp_cfg = 0.0 # For deterministic output if do_sample is false
 
