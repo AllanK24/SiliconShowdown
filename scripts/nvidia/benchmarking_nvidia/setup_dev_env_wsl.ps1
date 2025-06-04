@@ -159,113 +159,122 @@ git clone https://github.com/NVIDIA/TensorRT-LLM.git
 echo "✅ WSL environment setup complete."
 '@
 
-# Write setup script to a temp file
-$TempScriptPath = "$env:TEMP\wsl_setup.sh"
-$SetupScript | Out-File -Encoding ASCII -FilePath $TempScriptPath
+# Write setup script to a temp file on Windows
+$TempSetupScriptWindowsPath = "$env:TEMP\wsl_initial_setup.sh" # More descriptive temp name
+$SetupScript | Out-File -Encoding UTF8 -FilePath $TempSetupScriptWindowsPath
 
-Write-Host "Copying setup script to WSL..."
-wsl -d $Distro -- bash -c "mkdir -p /home/benchmark/setup"
-wsl -d $Distro -- bash -c "rm -f /home/benchmark/setup/setup.sh"
-wsl -d $Distro -- bash -c "cat > /home/benchmark/setup/setup.sh" < $TempScriptPath
-wsl -d $Distro -- bash -c "chmod +x /home/benchmark/setup/setup.sh"
+# --- Steps to get setup.sh into WSL and run it ---
+Write-Host "Copying initial setup script to WSL and making it executable..."
+$WSLTempSetupScriptPath = "/tmp/initial_setup_for_benchmark.sh" # Temp path inside WSL
 
-Write-Host "Running setup inside WSL..."
-wsl -d $Distro --user root -- bash -c "/home/benchmark/setup/setup.sh"
+# Ensure clean state and copy as root
+wsl -d $Distro --user root -- bash -c "rm -f $WSLTempSetupScriptPath"
+Get-Content -Path $TempSetupScriptWindowsPath -Raw | wsl -d $Distro --user root -- bash -c "cat > $WSLTempSetupScriptPath"
+wsl -d $Distro --user root -- bash -c "chmod +x $WSLTempSetupScriptPath"
 
-# Check venv exists
-$CheckVenv = wsl -d $Distro --user $WSLUser -- bash -c "test -d /home/benchmark/benchmark_env/.venv && echo 'venv_exists'"
+Write-Host "Running initial setup script inside WSL (as root)..."
+# This script creates the 'benchmark' user, its home, sudoers, benchmark_env dir, venv, etc.
+wsl -d $Distro --user root -- bash -c "$WSLTempSetupScriptPath"
+
+# Clean up the temporary setup script from /tmp in WSL
+wsl -d $Distro --user root -- bash -c "rm -f $WSLTempSetupScriptPath"
+# Clean up the temporary setup script from Windows %TEMP%
+Remove-Item -Path $TempSetupScriptWindowsPath -ErrorAction SilentlyContinue
+
+Write-Host "✅ Initial WSL setup script execution finished."
+
+# --- Verify 'benchmark' user and venv (now operating as $WSLUser = "benchmark") ---
+$VenvPathWSL = "/home/$WSLUser/benchmark_env/.venv"
+$CheckVenv = wsl -d $Distro --user $WSLUser -- bash -c "test -d $VenvPathWSL && echo 'venv_exists'"
+
 if (-not ($CheckVenv -eq "venv_exists")) {
-    Write-Host "❌ Virtual environment not found. Something went wrong during setup."
+    Write-Host "❌ Virtual environment not found at $VenvPathWSL for user '$WSLUser'."
+    Write-Host "   This indicates a problem with the initial setup script execution."
+    Write-Host "   Diagnosing by listing relevant directories as '$WSLUser':"
+    Write-Host "   Listing /home/$WSLUser/:"
+    wsl -d $Distro --user $WSLUser -- bash -c "ls -la /home/$WSLUser/"
+    Write-Host "   Listing /home/$WSLUser/benchmark_env/:"
+    wsl -d $Distro --user $WSLUser -- bash -c "ls -la /home/$WSLUser/benchmark_env/"
     exit 1
-}else {
-    Write-Host "✅ Virtual environment is set up successfully."
-}
-
-# Copy the run_benchmark.py file into WSL
-$BenchmarkScriptLocalPath = ".\run_benchmark.py"  # Change path if needed
-$BenchmarkScriptWSLPath = "/home/benchmark/benchmark_env/run_benchmark.py"
-
-if (Test-Path $BenchmarkScriptLocalPath) {
-    Write-Host "📋 Copying run_benchmark.py into WSL benchmarking folder..."
-    wsl -d $Distro --user $WSLUser -- bash -c "rm -f $BenchmarkScriptWSLPath" # Remove any existing file
-    wsl -d $Distro --user $WSLUser -- bash -c "cat > $BenchmarkScriptWSLPath" < $BenchmarkScriptLocalPath # Copy the file
-    wsl -d $Distro --user $WSLUser -- bash -c "chmod +x $BenchmarkScriptWSLPath" # Make it executable
-    Write-Host "✅ run_benchmark.py copied successfully."
 } else {
-    Write-Host "⚠️ Could not find run_benchmark.py in current directory. Skipping copy."
+    Write-Host "✅ Virtual environment verified at $VenvPathWSL for user '$WSLUser'."
 }
 
-# Copy run_benchmark_tensorrt_llm.py into WSL
-$TensorRTScriptLocalPath = ".\run_benchmark_tensorrt_llm.py"
-$TensorRTScriptWSLPath = "/home/benchmark/benchmark_env/run_benchmark_tensorrt_llm.py"
+# --- Copy Benchmark-Specific Files into the 'benchmark' user's environment ---
+# Base path for scripts inside WSL, within the 'benchmark' user's home
+$BaseWSLPathForScripts = "/home/$WSLUser/benchmark_env"
 
-if (Test-Path $TensorRTScriptLocalPath) {
-    Write-Host "📋 Copying run_benchmark_tensorrt_llm.py into WSL benchmarking folder..."
-    wsl -d $Distro --user $WSLUser -- bash -c "rm -f $TensorRTScriptWSLPath"
-    wsl -d $Distro --user $WSLUser -- bash -c "cat > $TensorRTScriptWSLPath" < $TensorRTScriptLocalPath
-    wsl -d $Distro --user $WSLUser -- bash -c "chmod +x $TensorRTScriptWSLPath"
-    Write-Host "✅ run_benchmark_tensorrt_llm.py copied successfully."
-} else {
-    Write-Host "⚠️ Could not find run_benchmark_tensorrt_llm.py in current directory. Skipping copy."
+# Define local and WSL paths for each script/config
+$ScriptMappings = @(
+    @{ Local = ".\run_benchmark.py";                  WSL = "$BaseWSLPathForScripts/run_benchmark.py";                  Executable = $true }
+    @{ Local = ".\run_benchmark_tensorrt_llm.py";     WSL = "$BaseWSLPathForScripts/run_benchmark_tensorrt_llm.py";     Executable = $true }
+    @{ Local = ".\config.yaml";                       WSL = "$BaseWSLPathForScripts/config.yaml";                       Executable = $false }
+    @{ Local = ".\collect_system_info.py";            WSL = "$BaseWSLPathForScripts/collect_system_info.py";            Executable = $true }
+)
+
+foreach ($mapping in $ScriptMappings) {
+    $LocalPath = $mapping.Local
+    $WSLPath = $mapping.WSL
+    $IsExecutable = $mapping.Executable
+
+    if (Test-Path $LocalPath) {
+        Write-Host "📋 Copying '$LocalPath' to '$WSLPath' for user '$WSLUser'..."
+        wsl -d $Distro --user $WSLUser -- bash -c "rm -f '$WSLPath'" # Use single quotes for WSL path
+        Get-Content -Path $LocalPath -Raw | wsl -d $Distro --user $WSLUser -- bash -c "cat > '$WSLPath'"
+        if ($IsExecutable) {
+            wsl -d $Distro --user $WSLUser -- bash -c "chmod +x '$WSLPath'"
+        }
+        Write-Host "✅ '$LocalPath' copied successfully."
+    } else {
+        Write-Host "⚠️ Could not find '$LocalPath'. Skipping copy."
+    }
 }
 
-# Copy config.yaml into WSL
-$ConfigYamlLocalPath = ".\config.yaml"
-$ConfigYamlWSLPath = "/home/benchmark/benchmark_env/config.yaml"
+# --- Running collect_system_info.py inside WSL as $WSLUser ---
+Write-Host "🚀 Running collect_system_info.py inside WSL as user '$WSLUser'..."
+$SystemInfoScriptWSLPath = "$BaseWSLPathForScripts/collect_system_info.py"
+$SystemInfoOutputWSL = "$BaseWSLPathForScripts/system_info_nvidia.json"
 
-if (Test-Path $ConfigYamlLocalPath) {
-    Write-Host "📋 Copying config.yaml into WSL benchmarking folder..."
-    wsl -d $Distro --user $WSLUser -- bash -c "rm -f $ConfigYamlWSLPath"
-    wsl -d $Distro --user $WSLUser -- bash -c "cat > $ConfigYamlWSLPath" < $ConfigYamlLocalPath
-    Write-Host "✅ config.yaml copied successfully."
-} else {
-    Write-Host "⚠️ Could not find config.yaml in current directory. Skipping copy."
-}
+# Command to run system info script within the venv
+# For bash -c, the entire command string needs to be correctly passed.
+# Using single quotes around the whole bash command helps, and escape internal single quotes if bash needs them.
+# OR, ensure PowerShell variables are expanded correctly into a string that bash will interpret.
+$BashCommandToRun = "source '$VenvPathWSL/bin/activate' && python3 '$SystemInfoScriptWSLPath' '$SystemInfoOutputWSL'"
 
-# Copy collect_system_info.py into WSL
-$SystemInfoScriptLocalPath = ".\collect_system_info.py"  # Adjust path if needed
-$SystemInfoScriptWSLPath = "/home/benchmark/benchmark_env/collect_system_info.py"
+Write-Host "Executing in WSL: wsl -d $Distro --user $WSLUser -- bash -c ""$BashCommandToRun""" # Note double quotes around $BashCommandToRun
+wsl -d $Distro --user $WSLUser -- bash -c "$BashCommandToRun" # This passes the string $BashCommandToRun to bash -c
 
-if (Test-Path $SystemInfoScriptLocalPath) {
-    Write-Host "📋 Copying collect_system_info.py into WSL benchmarking folder..."
-    wsl -d $Distro --user $WSLUser -- bash -c "rm -f $SystemInfoScriptWSLPath"
-    wsl -d $Distro --user $WSLUser -- bash -c "cat > $SystemInfoScriptWSLPath" < $SystemInfoScriptLocalPath
-    wsl -d $Distro --user $WSLUser -- bash -c "chmod +x $SystemInfoScriptWSLPath"
-    Write-Host "✅ collect_system_info.py copied successfully."
-} else {
-    Write-Host "⚠️ Could not find collect_system_info.py. Skipping."
-}
-
-Write-Host "🚀 Running collect_system_info.py inside WSL..."
-
-# Define WSL command to run the script and write output to known path
-$SystemInfoOutputWSL = "/home/benchmark/benchmark_env/system_info_nvidia.json"
-$SystemInfoOutputWindows = "$env:USERPROFILE\Desktop\system_info_nvidia.json"
-
-wsl -d $Distro --user $WSLUser -- bash -c "
-    source /home/benchmark/benchmark_env/.venv/bin/activate && \
-    python3 /home/benchmark/benchmark_env/collect_system_info.py > /dev/null
-"
-
-# Copy result from WSL to a results/ folder in the current script directory
+# --- Copy system_info_nvidia.json result from WSL to Windows ---
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $ResultsDir = Join-Path $ScriptDir "results"
 $SystemInfoOutputWindows = Join-Path $ResultsDir "system_info_nvidia.json"
 
-# Create results folder if it doesn't exist
 if (-not (Test-Path $ResultsDir)) {
     New-Item -ItemType Directory -Path $ResultsDir | Out-Null
 }
 
-Write-Host "💾 Copying system_info_nvidia.json to $ResultsDir..."
-wsl -d $Distro --user $WSLUser -- bash -c "
-    cat $SystemInfoOutputWSL
-" > $SystemInfoOutputWindows
+Write-Host "💾 Copying '$SystemInfoOutputWSL' to '$SystemInfoOutputWindows'..."
+$SystemInfoContentFromWSL = wsl -d $Distro --user $WSLUser -- bash -c "cat '$SystemInfoOutputWSL'"
 
-if (Test-Path $SystemInfoOutputWindows) {
-    Write-Host "✅ system_info_nvidia.json saved to results/ folder."
+if ($LASTEXITCODE -ne 0 -or -not $SystemInfoContentFromWSL) {
+    Write-Host "❌ Failed to read '$SystemInfoOutputWSL' from WSL. Content was empty or command failed."
+    # You can add more diagnostics here, like checking if the file exists in WSL
+    $FileExistsCheck = wsl -d $Distro --user $WSLUser -- bash -c "test -f '$SystemInfoOutputWSL' && echo 'exists' || echo 'not_exists'"
+    Write-Host "   File '$SystemInfoOutputWSL' in WSL: $FileExistsCheck"
 } else {
-    Write-Host "❌ Failed to save system_info_nvidia.json. Please check script output."
+    try {
+        # Ensure $SystemInfoContentFromWSL is treated as a single multi-line string if needed
+        # For JSON, it should be fine.
+        Set-Content -Path $SystemInfoOutputWindows -Value $SystemInfoContentFromWSL -Encoding UTF8
+        if (Test-Path $SystemInfoOutputWindows) {
+            # CORRECTED Write-Host line:
+            Write-Host "✅ system_info_nvidia.json saved to '$ResultsDir'."
+        } else {
+            Write-Host "❌ Failed to save system_info_nvidia.json to Windows. File not found after Set-Content."
+        }
+    } catch {
+        Write-Host "❌ Error saving system_info_nvidia.json to Windows: $($_.Exception.Message)"
+    }
 }
 
-Write-Host "`n🎉 All done! Your WSL environment is ready for benchmarking."
+Write-Host "`n🎉 All done! Your WSL environment should be ready for benchmarking."

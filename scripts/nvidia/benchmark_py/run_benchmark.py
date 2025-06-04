@@ -56,6 +56,16 @@ def get_nvidia_gpu_details(device_id=0):
     except Exception as e:
         print(f"Warning: Unexpected error getting NVML details: {e}")
         return None, None
+    
+def get_nvidia_energy_j(device_id=0):
+    if not NVML_AVAILABLE: return None
+    try:
+        handle = pynvml.nvmlDeviceGetHandleByIndex(device_id)
+        # Returns mJ since last driver load
+        energy_mJ = pynvml.nvmlDeviceGetTotalEnergyConsumption(handle)
+        return energy_mJ / 1000.0
+    except Exception:
+        return None
 
 # ---------- Benchmark Function (CUDA Specific - Per Prompt) ----------
 def benchmark_model_on_prompt_cuda(model, tokenizer, prompt, generation_config_obj, num_runs=3):
@@ -91,6 +101,7 @@ def benchmark_model_on_prompt_cuda(model, tokenizer, prompt, generation_config_o
 
         # --- Timed Runs ---
         gpu_times_ms = []
+        energy_runs_j = []
         output_tokens = 0
         generated_text = ""
 
@@ -100,6 +111,8 @@ def benchmark_model_on_prompt_cuda(model, tokenizer, prompt, generation_config_o
         temp_before, power_before = get_nvidia_gpu_details()
 
         for i in range(num_runs):
+            energy_start = get_nvidia_energy_j()
+            
             start_event = torch.cuda.Event(enable_timing=True)
             end_event = torch.cuda.Event(enable_timing=True)
             torch.cuda.synchronize(device)
@@ -113,6 +126,10 @@ def benchmark_model_on_prompt_cuda(model, tokenizer, prompt, generation_config_o
             torch.cuda.synchronize(device)
             iter_time_ms = start_event.elapsed_time(end_event)
             gpu_times_ms.append(iter_time_ms)
+            
+            energy_end = get_nvidia_energy_j()
+            if None not in (energy_start, energy_end):
+                energy_runs_j.append(energy_end - energy_start)
 
             if i == 0: # Decode only once
                  actual_output_ids = outputs[0][inputs.input_ids.shape[1]:]
@@ -131,7 +148,15 @@ def benchmark_model_on_prompt_cuda(model, tokenizer, prompt, generation_config_o
         avg_temp_c = (temp_before + temp_after) / 2 if temp_before is not None and temp_after is not None else None
         temp_increase_c = temp_after - temp_before if temp_before is not None and temp_after is not None else None
         avg_power_w = (power_before + power_after) / 2 if power_before is not None and power_after is not None else None
-
+        
+        # Get Energy Consumption in Joules
+        avg_energy_consumption_j = (
+            statistics.mean(energy_runs_j) if energy_runs_j else None
+        )
+        total_energy_j = (
+            sum(energy_runs_j) if energy_runs_j else None
+        )
+        
         results = {
             "prompt": prompt,
             "status": "success",
@@ -139,18 +164,20 @@ def benchmark_model_on_prompt_cuda(model, tokenizer, prompt, generation_config_o
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
             "ttft_ms_avg": ttft_ms_avg,
-            "avg_gpu_time_ms": round(avg_time_ms, 3),
+            "avg_time_ms": round(avg_time_ms, 3),
             "stddev_gpu_time_ms": round(stddev_time_ms, 3),
             "tokens_per_sec": round(tokens_per_sec, 2),
             "runs_gpu_time_ms": [round(t, 3) for t in gpu_times_ms],
-            "peak_gpu_memory_mb": round(peak_memory_mb, 2) if peak_memory_mb is not None else None,
-            "temp_before_c": temp_before,
-            "temp_after_c": temp_after,
-            "avg_temp_c": round(avg_temp_c, 1) if avg_temp_c is not None else None,
-            "temp_increase_c": round(temp_increase_c, 1) if temp_increase_c is not None else None,
+            "peak_host_memory_mb": round(peak_memory_mb, 2) if peak_memory_mb is not None else None,
+            "gpu_temp_before_c": temp_before,
+            "gpu_temp_after_c": temp_after,
+            "gpu_temp_delta_c": round(avg_temp_c, 1) if avg_temp_c is not None else None,
+            "gpu_temp_increase_c": round(temp_increase_c, 1) if temp_increase_c is not None else None,
             "power_before_w": round(power_before, 2) if power_before is not None else None,
             "power_after_w": round(power_after, 2) if power_after is not None else None,
             "avg_power_w": round(avg_power_w, 2) if avg_power_w is not None else None,
+            "avg_energy_consumption_j": round(avg_energy_consumption_j, 2) if avg_energy_consumption_j else None,
+            "total_energy_j": round(total_energy_j, 2) if total_energy_j else None,
             "output_text_preview": generated_text[:100] + "..."
         }
 
@@ -212,7 +239,6 @@ def run_full_benchmark_cuda(output_filename="benchmark_results_cuda.json"):
                     **config["generation_config"],
                 )
             
-            print(generation_config)
             # Preload model to ensure it is downloaded before timing
             _ = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=benchmark_dtype).to(device) # Preload to ensure model is downloaded
             torch.cuda.empty_cache() # Clear cache before loading to avoid memory issues
@@ -226,9 +252,6 @@ def run_full_benchmark_cuda(output_filename="benchmark_results_cuda.json"):
             load_end = time.time()
             model_load_time = load_end - load_start
             print(f"Model ready on {device} in {model_load_time:.2f} seconds.")
-            
-            if "llama" in model_id.lower():
-                model.config.eos_token_id = model.config.pad_token_id
 
             # --- Record Benchmark Parameters for this model ---
             current_model_params = {
@@ -238,7 +261,7 @@ def run_full_benchmark_cuda(output_filename="benchmark_results_cuda.json"):
                 "num_global_warmup_runs": NUM_GLOBAL_WARMUP_RUNS,
                 "num_timed_runs_per_prompt": NUM_TIMED_RUNS_PER_PROMPT,
                 "model_load_time_s": round(model_load_time, 2),
-                "accelerator_used": "CUDA",
+                "device": device.upper(),
                 "quantization_method": "None"
             }
 

@@ -22,7 +22,7 @@ with open("config.yaml", "r") as f:
     config = yaml.safe_load(f)
 
 # ---------- Model List (LLM Only) ----------
-model_list = config["model_list"]
+model_list = config["model_list_tensorrt_llm"]
 
 # ---------- Warm-up Prompts ----------
 warm_prompts = config["warm_prompts"]
@@ -33,14 +33,11 @@ prompt_list = config["prompt_list"]
 NUM_TIMED_RUNS_PER_PROMPT = config["num_timed_runs_per_prompt"] # Number of repetitions for timing
 
 # ---------- Generation Config ----------
-with open("generation_config.json", "r") as f:
-    generation_config_data = json.load(f)
-    
 generation_config = SamplingParams(
     max_tokens=config["max_new_tokens"],
-    temperature=config["temparature"],
-    top_k=generation_config_data.get("top_k"),
-    top_p=generation_config_data.get("top_p"),
+    temperature=config["temperature"],
+    top_p=config["top_p"],
+    top_k=config["top_k"],
 )
 BATCH_SIZE = config["batch_size"]
 
@@ -70,9 +67,9 @@ def benchmark_model_on_prompt_tensorrt_llm(model, tokenizer, prompt, generation_
         # --- TTFT Runs ---
         ttft_config_obj = SamplingParams(
             max_tokens=1,
-            temperature=generation_config_data.get("temparature"),
-            top_k=generation_config_data.get("top_k"),
-            top_p=generation_config_data.get("top_p"),
+            temperature=config["temperature"],
+            top_p=config["top_p"],
+            top_k=config["top_k"],
         )
         ttft_config_obj.max_tokens = 1  # No new tokens for TTFT
         ttft_runs = []
@@ -197,11 +194,12 @@ def run_full_benchmark_tensorrt_llm(output_filename="benchmark_results_tensorrt_
             # --- Load Model & Tokenizer ---
             print(f"Loading tokenizer {model_id}...")
             tokenizer = AutoTokenizer.from_pretrained(model_id, use_fast=True)
-            
-            # If needed, set padding token in current_generation_config, however, this is not always necessary
-            current_generation_config = generation_config
 
             print(f"Loading model {model_id} (dtype: {benchmark_dtype})...")
+            if "gemma" in model_id.lower():
+                benchmark_dtype = torch.bfloat16 # Gemma models use bfloat16
+            else:
+                benchmark_dtype = getattr(torch, config.get("benchmark_dtype", "float16"))
             
             # Preload model to ensure it is downloaded before timing
             _ = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=benchmark_dtype).to(device) # Preload to ensure model is downloaded
@@ -233,7 +231,7 @@ def run_full_benchmark_tensorrt_llm(output_filename="benchmark_results_tensorrt_
                 w_inputs = tokenizer.encode(w_prompt)
                 model.generate(
                     inputs=[w_inputs],
-                    sampling_params=current_generation_config,
+                    sampling_params=generation_config,
                     use_tqdm=True,
                 )
             torch.cuda.synchronize(device)
@@ -244,7 +242,7 @@ def run_full_benchmark_tensorrt_llm(output_filename="benchmark_results_tensorrt_
                 print(f"--- Prompt: '{prompt_text[:50]}...' ---")
                 # Pass the potentially model-specific generation config
                 prompt_metrics = benchmark_model_on_prompt_tensorrt_llm(
-                    model, tokenizer, prompt_text, current_generation_config,
+                    model, tokenizer, prompt_text, generation_config,
                     num_runs=NUM_TIMED_RUNS_PER_PROMPT
                 )
 

@@ -142,18 +142,18 @@ def benchmark_model_on_prompt_tensorrt_llm(model, tokenizer, prompt, generation_
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
             "ttft_ms_avg": ttft_ms_avg,
-            "avg_gpu_time_ms": round(avg_time_ms, 3),
+            "avg_time_ms": round(avg_time_ms, 3),
             "stddev_gpu_time_ms": round(stddev_time_ms, 3),
             "tokens_per_sec": round(tokens_per_sec, 2),
             "runs_gpu_time_ms": [round(t, 3) for t in gpu_times_ms],
-            "peak_gpu_memory_mb": round(peak_memory_mb, 2) if peak_memory_mb is not None else None,
-            "temp_before_c": temp_before,
-            "temp_after_c": temp_after,
-            "avg_temp_c": round(avg_temp_c, 1) if avg_temp_c is not None else None,
+            "peak_host_memory_mb": round(peak_memory_mb, 2) if peak_memory_mb is not None else None,
+            "gpu_temp_before_c": temp_before,
+            "gpu_temp_after_c": temp_after,
+            "gpu_temp_delta_c": round(avg_temp_c, 1) if avg_temp_c is not None else None,
             "temp_increase_c": round(temp_increase_c, 1) if temp_increase_c is not None else None,
             "power_before_w": round(power_before, 2) if power_before is not None else None,
             "power_after_w": round(power_after, 2) if power_after is not None else None,
-            "avg_power_w": round(avg_power_w, 2) if avg_power_w is not None else None,
+            "avg_power_during_inference_w": round(avg_power_w, 2) if avg_power_w is not None else None,
             "output_text_preview": generated_text[:100] + "..."
         }
 
@@ -221,7 +221,7 @@ def run_full_benchmark_tensorrt_llm(output_filename="benchmark_results_tensorrt_
                 "num_global_warmup_runs": NUM_GLOBAL_WARMUP_RUNS,
                 "num_timed_runs_per_prompt": NUM_TIMED_RUNS_PER_PROMPT,
                 "model_load_time_s": round(model_load_time, 2),
-                "accelerator_used": "CUDA + TensorRT-LLM",
+                "device": "CUDA + TensorRT-LLM",
                 "quantization_method": "None"
             }
 
