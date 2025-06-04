@@ -18,15 +18,20 @@ if ($LASTEXITCODE -eq 0) {
 # Configure WSL to use maximum resources
 Write-Host "🛠️ Configuring WSL to use maximum CPU, RAM, and enable GPU support..."
 
-$WSLConfigPath = "$env:USERPROFILE\.wslconfig"
-$WSLConfigContent = @"
+$wslConfigPath = Join-Path -Path $HOME -ChildPath '.wslconfig'
+
+$ramGB    = [math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB)
+$cpuCount = [Environment]::ProcessorCount   # integer
+
+$wslConfig = @"
 [wsl2]
-memory=100%
-processors=100%
-gpuSupport=true
+memory=${ramGB}GB        # cap = all physical RAM
+processors=$cpuCount     # all logical CPUs
+swap=0                   # no swap file – optional
 "@
 
-$WSLConfigContent | Out-File -Encoding ASCII -FilePath $WSLConfigPath
+# Write (or overwrite) the config; -Force creates the file if absent
+Set-Content -Path $wslConfigPath -Value $wslConfig -Encoding ASCII -NoNewline -Force
 
 Write-Host "✅ WSL configuration saved to $WSLConfigPath"
 

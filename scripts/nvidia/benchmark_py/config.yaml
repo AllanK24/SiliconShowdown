@@ -25,6 +25,9 @@ prompt_list:
 num_timed_runs_per_prompt: 3
 
 generation_config:
+  temperature: null
+  top_k: null
+  top_p: null
   max_new_tokens: 256
   do_sample: false
 

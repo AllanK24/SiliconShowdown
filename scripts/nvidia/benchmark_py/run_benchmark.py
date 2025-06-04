@@ -66,17 +66,24 @@ def benchmark_model_on_prompt_cuda(model, tokenizer, prompt, generation_config_o
         inputs = tokenizer(prompt, return_tensors="pt").to(device)
         input_tokens = inputs.input_ids.shape[1]
         
+        ttft_config_obj = GenerationConfig(
+            temperature=config["generation_config"]["temperature"],
+            top_p=config["generation_config"]["top_p"],
+            top_k=config["generation_config"]["top_k"],
+            do_sample=config["generation_config"]["do_sample"],
+            max_new_tokens=1,  # For TTFT, we only generate 1 token
+        )
+        
         # --- TTFT Runs ---
+        model.eval()  # Ensure model is in eval mode for TTFT
         ttft_runs = []
         for _ in range(num_runs):
             start_evt = torch.cuda.Event(enable_timing=True)
             end_evt   = torch.cuda.Event(enable_timing=True)
-
+            
             start_evt.record()
             with torch.inference_mode():
-                _ = model.generate(**inputs,
-                                max_new_tokens=1,
-                                do_sample=False)
+                _ = model.generate(**inputs, generation_config=ttft_config_obj)
             end_evt.record()
             torch.cuda.synchronize()               # wait so elapsed_time is valid
             ttft_runs.append(start_evt.elapsed_time(end_evt))  # ms
@@ -188,9 +195,24 @@ def run_full_benchmark_cuda(output_filename="benchmark_results_cuda.json"):
             print(f"Loading model {model_id} (dtype: {benchmark_dtype})...")
             if "gemma" in model_id.lower():
                 benchmark_dtype = torch.bfloat16 # Gemma models use bfloat16
+                generation_config = GenerationConfig(
+                    do_sample=config["generation_config"]["do_sample"],
+                    temperature=config["generation_config"]["temperature"],
+                    top_p=config["generation_config"]["top_p"],
+                    top_k=config["generation_config"]["top_k"],
+                    max_new_tokens=config["generation_config"]["max_new_tokens"],
+                    cache_implementation='hybrid', 
+                    pad_token_id=0, 
+                    bos_token_id=2,
+                    eos_token_id=[1, 106],
+                ) 
             else:
                 benchmark_dtype = getattr(torch, config.get("benchmark_dtype", "float16"))
+                generation_config = GenerationConfig(
+                    **config["generation_config"],
+                )
             
+            print(generation_config)
             # Preload model to ensure it is downloaded before timing
             _ = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=benchmark_dtype).to(device) # Preload to ensure model is downloaded
             torch.cuda.empty_cache() # Clear cache before loading to avoid memory issues
@@ -204,6 +226,9 @@ def run_full_benchmark_cuda(output_filename="benchmark_results_cuda.json"):
             load_end = time.time()
             model_load_time = load_end - load_start
             print(f"Model ready on {device} in {model_load_time:.2f} seconds.")
+            
+            if "llama" in model_id.lower():
+                model.config.eos_token_id = model.config.pad_token_id
 
             # --- Record Benchmark Parameters for this model ---
             current_model_params = {
@@ -222,7 +247,7 @@ def run_full_benchmark_cuda(output_filename="benchmark_results_cuda.json"):
             for w_prompt in warm_prompts:
                 w_inputs = tokenizer(w_prompt, return_tensors="pt").to(device)
                 with torch.inference_mode():
-                    _ = model.generate(**w_inputs, generation_config=generation_config) # Use potentially updated config
+                    _ = model.generate(**w_inputs, generation_config=generation_config)
             torch.cuda.synchronize(device)
             print("Global warm-up complete.")
 
