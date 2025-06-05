@@ -41,7 +41,7 @@ generation_config = SamplingParams(
     temperature=config['generation_config']["temperature"],
     top_p=config['generation_config']["top_p"],
     top_k=config['generation_config']["top_k"],
-    random_seed=config["random_seed"],
+    seed=config["random_seed"],
 )
 BATCH_SIZE = config["batch_size"]
 
