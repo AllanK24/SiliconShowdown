@@ -20,7 +20,7 @@ from tensorrt_llm import LLM, SamplingParams
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 # Load config from YAML
-with open("config.yaml", "r") as f:
+with open("scripts/nvidia/benchmark_py/config.yaml", "r") as f:
     config = yaml.safe_load(f)
 
 # ---------- Model List (LLM Only) ----------
