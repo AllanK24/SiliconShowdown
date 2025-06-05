@@ -32,7 +32,6 @@
 }
 
 // What differs:
-* power and energy consumption
 * Change avg_power_before_prompt_w to power_before_w
-* Change avg_power_after_prompt_w to power_after_w
+* Change avg_power_after_prompt_w to power_after_w, gpu_temp_delta_c to gpu_temp_avg_c
 * Add add_gpu_temp_increase_c, runs_gpu_time_ms, total_energy_j

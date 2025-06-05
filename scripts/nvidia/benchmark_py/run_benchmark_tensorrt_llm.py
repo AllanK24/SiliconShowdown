@@ -3,7 +3,9 @@ import time
 import yaml
 import json
 import torch
+import random
 import statistics
+import numpy as np
 try:
     import pynvml
     pynvml.nvmlInit()
@@ -38,8 +40,18 @@ generation_config = SamplingParams(
     temperature=config["temperature"],
     top_p=config["top_p"],
     top_k=config["top_k"],
+    random_seed=config["random_seed"],
 )
 BATCH_SIZE = config["batch_size"]
+
+# ---------- Set Seeds ----------
+def set_seeds(seed_value):
+    random.seed(seed_value)
+    np.random.seed(seed_value)
+    torch.manual_seed(seed_value)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed_value)
+        torch.cuda.manual_seed_all(seed_value)
 
 # ---------- NVML Helpers (Nvidia Specific) ----------
 def get_nvidia_gpu_details(device_id=0):
@@ -174,7 +186,7 @@ def benchmark_model_on_prompt_tensorrt_llm(model, tokenizer, prompt, generation_
             "peak_host_memory_mb": round(peak_memory_mb, 2) if peak_memory_mb is not None else None,
             "gpu_temp_before_c": temp_before,
             "gpu_temp_after_c": temp_after,
-            "gpu_temp_delta_c": round(avg_temp_c, 1) if avg_temp_c is not None else None,
+            "gpu_temp_avg_c": round(avg_temp_c, 1) if avg_temp_c is not None else None,
             "gpu_temp_increase_c": round(temp_increase_c, 1) if temp_increase_c is not None else None,
             "power_before_w": round(power_before, 2) if power_before is not None else None,
             "power_after_w": round(power_after, 2) if power_after is not None else None,
@@ -225,8 +237,21 @@ def run_full_benchmark_tensorrt_llm(output_filename="benchmark_results_tensorrt_
             print(f"Loading model {model_id} (dtype: {benchmark_dtype})...")
             if "gemma" in model_id.lower():
                 benchmark_dtype = torch.bfloat16 # Gemma models use bfloat16
+                generation_config = SamplingParams(
+                    temperature=config["generation_config"]["temperature"],
+                    top_p=config["generation_config"]["top_p"],
+                    top_k=config["generation_config"]["top_k"],
+                    max_tokens=config["generation_config"]["max_new_tokens"],
+                    pad_id=0
+                ) 
             else:
                 benchmark_dtype = getattr(torch, config.get("benchmark_dtype", "float16"))
+                generation_config = SamplingParams(
+                    max_tokens=config["max_new_tokens"],
+                    temperature=config["temperature"],
+                    top_p=config["top_p"],
+                    top_k=config["top_k"],
+                )
             
             # Preload model to ensure it is downloaded before timing
             _ = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=benchmark_dtype).to(device) # Preload to ensure model is downloaded
@@ -235,7 +260,7 @@ def run_full_benchmark_tensorrt_llm(output_filename="benchmark_results_tensorrt_
             
             # --- Load Model ---
             load_start = time.time()
-            model = LLM(model=model_id, tokenizer=model_id, trust_remote_code=True,) # Add dtype=
+            model = LLM(model=model_id, tokenizer=model_id, trust_remote_code=True)
             load_end = time.time()
             model_load_time = load_end - load_start
             print(f"Model ready on {device} in {model_load_time:.2f} seconds.")
@@ -304,6 +329,7 @@ def run_full_benchmark_tensorrt_llm(output_filename="benchmark_results_tensorrt_
 
 # --- Run ---
 if __name__ == "__main__":
+    set_seeds(config["random_seed"])  # Set seeds for reproducibility
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     output_file = f"llm_benchmark_results_tensorrt_llm_{timestamp}.json"
     run_full_benchmark_tensorrt_llm(output_filename=output_file)
