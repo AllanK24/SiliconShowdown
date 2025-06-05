@@ -19,7 +19,7 @@ from huggingface_hub import login
 from transformers import AutoTokenizer, AutoModelForCausalLM, GenerationConfig
 
 # Load config from YAML
-with open("config.yaml", "r") as f:
+with open("scripts/nvidia/benchmark_py/config.yaml", "r") as f:
     config = yaml.safe_load(f)
 
 # ---------- Model List (LLM Only) ----------

@@ -24,6 +24,7 @@ with open("scripts/nvidia/benchmark_py/config.yaml", "r") as f:
     config = yaml.safe_load(f)
 
 # ---------- Model List (LLM Only) ----------
+hf_model_list = config["model_list"]
 model_list = config["model_list_tensorrt_llm"]
 
 # ---------- Warm-up Prompts ----------
@@ -32,14 +33,14 @@ NUM_GLOBAL_WARMUP_RUNS = len(warm_prompts)
 
 # ---------- Benchmark Prompts ----------
 prompt_list = config["prompt_list"]
-NUM_TIMED_RUNS_PER_PROMPT = config["num_timed_runs_per_prompt"] # Number of repetitions for timing
+NUM_TIMED_RUNS_PER_PROMPT = config["num_runs_per_prompt"] # Number of repetitions for timing
 
 # ---------- Generation Config ----------
 generation_config = SamplingParams(
-    max_tokens=config["max_new_tokens"],
-    temperature=config["temperature"],
-    top_p=config["top_p"],
-    top_k=config["top_k"],
+    max_tokens=config['generation_config']["max_new_tokens"],
+    temperature=config['generation_config']["temperature"],
+    top_p=config['generation_config']["top_p"],
+    top_k=config['generation_config']["top_k"],
     random_seed=config["random_seed"],
 )
 BATCH_SIZE = config["batch_size"]
@@ -89,9 +90,9 @@ def benchmark_model_on_prompt_tensorrt_llm(model, tokenizer, prompt, generation_
         # --- TTFT Runs ---
         ttft_config_obj = SamplingParams(
             max_tokens=1,
-            temperature=config["temperature"],
-            top_p=config["top_p"],
-            top_k=config["top_k"],
+            temperature=config['generation_config']["temperature"],
+            top_p=config['generation_config']["top_p"],
+            top_k=config['generation_config']["top_k"],
         )
         ttft_config_obj.max_tokens = 1  # No new tokens for TTFT
         ttft_runs = []
@@ -224,15 +225,15 @@ def run_full_benchmark_tensorrt_llm(output_filename="benchmark_results_tensorrt_
     except Exception as e: print(f"Login failed: {e}")
 
     # --- Loop through models ---
-    for model_id in model_list:
+    for model_id, hf_model_id in zip(model_list, hf_model_list):
         print(f"\n{'='*20} Benchmarking Model: {model_id} {'='*20}")
         model, model_load_time = None, None
         current_model_params = {} # Store params for this model run
 
         try:
             # --- Load Model & Tokenizer ---
-            print(f"Loading tokenizer {model_id}...")
-            tokenizer = AutoTokenizer.from_pretrained(model_id, use_fast=True)
+            print(f"Loading tokenizer {hf_model_id}...")
+            tokenizer = AutoTokenizer.from_pretrained(hf_model_id, use_fast=True)
 
             print(f"Loading model {model_id} (dtype: {benchmark_dtype})...")
             if "gemma" in model_id.lower():
@@ -247,20 +248,20 @@ def run_full_benchmark_tensorrt_llm(output_filename="benchmark_results_tensorrt_
             else:
                 benchmark_dtype = getattr(torch, config.get("benchmark_dtype", "float16"))
                 generation_config = SamplingParams(
-                    max_tokens=config["max_new_tokens"],
-                    temperature=config["temperature"],
-                    top_p=config["top_p"],
-                    top_k=config["top_k"],
+                    max_tokens=config['generation_config']["max_new_tokens"],
+                    temperature=config['generation_config']["temperature"],
+                    top_p=config['generation_config']["top_p"],
+                    top_k=config['generation_config']["top_k"],
                 )
             
             # Preload model to ensure it is downloaded before timing
-            _ = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=benchmark_dtype).to(device) # Preload to ensure model is downloaded
+            _ = AutoModelForCausalLM.from_pretrained(hf_model_id, torch_dtype=benchmark_dtype).to(device) # Preload to ensure model is downloaded
             torch.cuda.empty_cache() # Clear cache before loading to avoid memory issues
-            print(f"Model {model_id} downloaded, now loading with TensorRT-LLM...")
+            print(f"Model {hf_model_id} downloaded, now loading with TensorRT-LLM...")
             
             # --- Load Model ---
             load_start = time.time()
-            model = LLM(model=model_id, tokenizer=model_id, trust_remote_code=True)
+            model = LLM(model=model_id, tokenizer=hf_model_id, trust_remote_code=True)
             load_end = time.time()
             model_load_time = load_end - load_start
             print(f"Model ready on {device} in {model_load_time:.2f} seconds.")
@@ -317,7 +318,7 @@ def run_full_benchmark_tensorrt_llm(output_filename="benchmark_results_tensorrt_
         finally:
             # --- Cleanup ---
             print(f"Cleaning up {model_id}...")
-            del model; del tokenizer
+            del model
             torch.cuda.empty_cache()
             print("Cleanup complete.")
             # Save final results again
