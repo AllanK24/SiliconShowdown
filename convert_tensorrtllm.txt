@@ -10,7 +10,7 @@ trtllm-build --checkpoint_dir /home/allank24/Programming/SiliconShowdown/models/
             --max_batch_size 1 \
             --max_input_len 512 \
             --max_num_tokens 512 \
-            --max_seq_len 4096 \
+            --max_seq_len 1024 \
             --logits_dtype float16
 
 # LLAMA 3.2 1B
@@ -24,7 +24,7 @@ trtllm-build --checkpoint_dir models/llama/Llama-3.2-1B-Instruct_TensorRT-LLM \
             --max_batch_size 1 \
             --max_input_len 512 \
             --max_num_tokens 512 \
-            --max_seq_len 4096 \
+            --max_seq_len 1024 \
             --logits_dtype float16
 
 # Qwen 2.5 1.5B
@@ -38,5 +38,5 @@ trtllm-build --checkpoint_dir models/qwen/Qwen2.5-1.5B-Instruct_TensorRT-LLM \
             --max_batch_size 1 \
             --max_input_len 512 \
             --max_num_tokens 512 \
-            --max_seq_len 4096 \
+            --max_seq_len 1024 \
             --logits_dtype float16

@@ -174,7 +174,7 @@ def benchmark_model_on_prompt_tensorrt_llm(model, tokenizer, prompt, generation_
         )
 
         results = {
-            "prompt": prompt,
+            "prompt": prompt[:100] + "...", 
             "status": "success",
             "error_message": None,
             "input_tokens": input_tokens,
@@ -233,31 +233,14 @@ def run_full_benchmark_tensorrt_llm(output_filename="benchmark_results_tensorrt_
         try:
             # --- Load Model & Tokenizer ---
             print(f"Loading tokenizer {hf_model_id}...")
-            tokenizer = AutoTokenizer.from_pretrained(hf_model_id, use_fast=True)
+            tokenizer = AutoTokenizer.from_pretrained(hf_model_id, use_fast=True, local_files_only=True)
 
-            print(f"Loading model {model_id} (dtype: {benchmark_dtype})...")
             if "gemma" in model_id.lower():
                 benchmark_dtype = torch.bfloat16 # Gemma models use bfloat16
-                generation_config = SamplingParams(
-                    temperature=config["generation_config"]["temperature"],
-                    top_p=config["generation_config"]["top_p"],
-                    top_k=config["generation_config"]["top_k"],
-                    max_tokens=config["generation_config"]["max_new_tokens"],
-                    pad_id=0
-                ) 
             else:
                 benchmark_dtype = getattr(torch, config.get("benchmark_dtype", "float16"))
-                generation_config = SamplingParams(
-                    max_tokens=config['generation_config']["max_new_tokens"],
-                    temperature=config['generation_config']["temperature"],
-                    top_p=config['generation_config']["top_p"],
-                    top_k=config['generation_config']["top_k"],
-                )
-            
-            # Preload model to ensure it is downloaded before timing
-            _ = AutoModelForCausalLM.from_pretrained(hf_model_id, torch_dtype=benchmark_dtype).to(device) # Preload to ensure model is downloaded
-            torch.cuda.empty_cache() # Clear cache before loading to avoid memory issues
-            print(f"Model {hf_model_id} downloaded, now loading with TensorRT-LLM...")
+        
+            print(f"Loading model {model_id} (dtype: {benchmark_dtype})...")
             
             # --- Load Model ---
             load_start = time.time()
