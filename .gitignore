@@ -12,3 +12,4 @@ scripts/mac/RunBenchmark.app
 scripts/mac/RunCleanup.app
 .env
 model.cache
+scripts/mac/benchmark/results
