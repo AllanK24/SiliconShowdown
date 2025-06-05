@@ -34,4 +34,5 @@ generation_config:
 batch_size: 1
 
 # Advanced/optional settings
-benchmark_dtype: float16
+benchmark_dtype: float16 # bfloat16 used for Gemma
+random_seed: 42

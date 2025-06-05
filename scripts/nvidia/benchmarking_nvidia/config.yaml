@@ -5,6 +5,11 @@ model_list:
   - google/gemma-3-1b-it
   - meta-llama/Llama-3.2-1B-Instruct
 
+model_list_tensorrt_llm:
+  - models/qwen/Qwen2.5-1.5B-Instruct_TensorRT-LLM
+  - models/gemma/gemma-3-1b-it_TensorRT-LLM
+  - models/llama/Llama-3.2-1B-Instruct_TensorRT-LLM
+
 warm_prompts:
   - "Hello, how are you today?"
   - "What is the capital of France?"
@@ -20,10 +25,14 @@ prompt_list:
 num_timed_runs_per_prompt: 3
 
 generation_config:
+  temperature: null
+  top_k: null
+  top_p: null
   max_new_tokens: 256
   do_sample: false
 
 batch_size: 1
 
 # Advanced/optional settings
-benchmark_dtype: float16
+benchmark_dtype: float16 # bfloat16 used for Gemma
+random_seed: 42

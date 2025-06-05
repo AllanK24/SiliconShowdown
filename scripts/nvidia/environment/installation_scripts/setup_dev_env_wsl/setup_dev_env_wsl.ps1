@@ -166,7 +166,7 @@ $SetupScript | Out-File -Encoding ASCII -FilePath $TempScriptPath
 Write-Host "Copying setup script to WSL..."
 wsl -d $Distro -- bash -c "mkdir -p /home/benchmark/setup"
 wsl -d $Distro -- bash -c "rm -f /home/benchmark/setup/setup.sh"
-wsl -d $Distro -- bash -c "cat > /home/benchmark/setup/setup.sh" < $TempScriptPath
+Get-Content -Path $TempScriptPath -Raw | wsl -d $Distro -- bash -c "cat > /home/benchmark/setup/setup.sh"
 wsl -d $Distro -- bash -c "chmod +x /home/benchmark/setup/setup.sh"
 
 Write-Host "Running setup inside WSL..."
@@ -188,7 +188,7 @@ $BenchmarkScriptWSLPath = "/home/benchmark/benchmark_env/run_benchmark.py"
 if (Test-Path $BenchmarkScriptLocalPath) {
     Write-Host "📋 Copying run_benchmark.py into WSL benchmarking folder..."
     wsl -d $Distro --user $WSLUser -- bash -c "rm -f $BenchmarkScriptWSLPath" # Remove any existing file
-    wsl -d $Distro --user $WSLUser -- bash -c "cat > $BenchmarkScriptWSLPath" < $BenchmarkScriptLocalPath # Copy the file
+    Get-Content -Path $BenchmarkScriptLocalPath -Raw | wsl -d $Distro --user $WSLUser -- bash -c "cat > $BenchmarkScriptWSLPath"
     wsl -d $Distro --user $WSLUser -- bash -c "chmod +x $BenchmarkScriptWSLPath" # Make it executable
     Write-Host "✅ run_benchmark.py copied successfully."
 } else {
@@ -202,7 +202,7 @@ $TensorRTScriptWSLPath = "/home/benchmark/benchmark_env/run_benchmark_tensorrt_l
 if (Test-Path $TensorRTScriptLocalPath) {
     Write-Host "📋 Copying run_benchmark_tensorrt_llm.py into WSL benchmarking folder..."
     wsl -d $Distro --user $WSLUser -- bash -c "rm -f $TensorRTScriptWSLPath"
-    wsl -d $Distro --user $WSLUser -- bash -c "cat > $TensorRTScriptWSLPath" < $TensorRTScriptLocalPath
+    Get-Content -Path $TensorRTScriptLocalPath -Raw | wsl -d $Distro --user $WSLUser -- bash -c "cat > $TensorRTScriptWSLPath"
     wsl -d $Distro --user $WSLUser -- bash -c "chmod +x $TensorRTScriptWSLPath"
     Write-Host "✅ run_benchmark_tensorrt_llm.py copied successfully."
 } else {
@@ -216,7 +216,7 @@ $ConfigYamlWSLPath = "/home/benchmark/benchmark_env/config.yaml"
 if (Test-Path $ConfigYamlLocalPath) {
     Write-Host "📋 Copying config.yaml into WSL benchmarking folder..."
     wsl -d $Distro --user $WSLUser -- bash -c "rm -f $ConfigYamlWSLPath"
-    wsl -d $Distro --user $WSLUser -- bash -c "cat > $ConfigYamlWSLPath" < $ConfigYamlLocalPath
+    Get-Content -Path $ConfigYamlLocalPath -Raw | wsl -d $Distro --user $WSLUser -- bash -c "cat > $ConfigYamlWSLPath"
     Write-Host "✅ config.yaml copied successfully."
 } else {
     Write-Host "⚠️ Could not find config.yaml in current directory. Skipping copy."
@@ -229,7 +229,7 @@ $SystemInfoScriptWSLPath = "/home/benchmark/benchmark_env/collect_system_info.py
 if (Test-Path $SystemInfoScriptLocalPath) {
     Write-Host "📋 Copying collect_system_info.py into WSL benchmarking folder..."
     wsl -d $Distro --user $WSLUser -- bash -c "rm -f $SystemInfoScriptWSLPath"
-    wsl -d $Distro --user $WSLUser -- bash -c "cat > $SystemInfoScriptWSLPath" < $SystemInfoScriptLocalPath
+    Get-Content -Path $SystemInfoScriptLocalPath -Raw | wsl -d $Distro --user $WSLUser -- bash -c "cat > $SystemInfoScriptWSLPath"
     wsl -d $Distro --user $WSLUser -- bash -c "chmod +x $SystemInfoScriptWSLPath"
     Write-Host "✅ collect_system_info.py copied successfully."
 } else {

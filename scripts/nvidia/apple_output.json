@@ -1,0 +1,37 @@
+{
+        "prompt": "Translate the following sentence to German: 'The weather is beautiful today.'",
+        "status": "success",
+        "error_message": null,
+        "input_tokens": 15,
+        "output_tokens": 104,
+        "avg_time_ms": 2675.526,
+        "tokens_per_sec": 38.87,
+        "avg_energy_consumption_j": 5.167,
+        "avg_power_during_inference_w": 1.93,
+        "power_before_prompt_w": 0.09,
+        "power_after_prompt_w": 0.05,
+        "ttft_ms_avg": 96.32,
+        "output_text_preview": "\n\nHere are a few options for translating it, with slightly different nuances:\n\n* **Das Wetter ist he...",
+        "cpu_temp_before_c": 44.3,
+        "cpu_temp_after_c": 44.9,
+        "cpu_temp_delta_c": 0.6,
+        "gpu_temp_before_c": 42.8,
+        "gpu_temp_after_c": 43.8,
+        "gpu_temp_delta_c": 1.0,
+        "rss_before_mb": 723.78,
+        "rss_after_mb": 537.47,
+        "peak_rss_during_all_runs_mb": 724.86,
+        "peak_host_memory_mb": 724.86,
+        "model_id": "google/gemma-3-1b-it",
+        "device": "mlx_gpu",
+        "dtype": "mlx_internal (typically float16/bfloat16)",
+        "model_load_time_s": 3.121,
+        "rss_after_load_mb": 898.78,
+        "model_move_to_device_time_s": null,
+        "rss_after_device_move_mb": null
+}
+
+// What differs:
+* Change avg_power_before_prompt_w to power_before_w
+* Change avg_power_after_prompt_w to power_after_w, gpu_temp_delta_c to gpu_temp_avg_c
+* Add add_gpu_temp_increase_c, runs_gpu_time_ms, total_energy_j
