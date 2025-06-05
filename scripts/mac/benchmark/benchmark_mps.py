@@ -3,13 +3,15 @@ import os
 import json
 import gc
 import threading
-import time # Keep for time.strftime, but use time.perf_counter for durations
+import time
 import subprocess
 import signal
 import yaml
 import tempfile
 import sys
-import statistics # ADDED for stdev
+import statistics
+import random
+import numpy as np
 
 import torch
 import psutil
@@ -19,11 +21,29 @@ from transformers import AutoTokenizer, AutoModelForCausalLM, GenerationConfig
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
-def save_generation_config(generation_config: GenerationConfig, filename="generation_config.json"):
-    """Saves the generation config to a JSON file."""
-    with open(filename, "w") as f:
-        json.dump(generation_config.to_dict(), f, indent=4)
+DEFAULT_SEED = 42
+CURRENT_SEED_USED = DEFAULT_SEED # Global to store the seed actually used
 
+def set_seed(seed_value: int):
+    """Sets random seeds for reproducibility."""
+    global CURRENT_SEED_USED
+    random.seed(seed_value)
+    np.random.seed(seed_value)
+    torch.manual_seed(seed_value)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed_value)
+    if torch.backends.mps.is_available():
+        torch.mps.manual_seed(seed_value)
+    CURRENT_SEED_USED = seed_value # Store the seed that was set
+    print(f"INFO: Random seeds set to {seed_value} for Python, NumPy, and PyTorch (including MPS).")
+
+def save_generation_config(generation_config: GenerationConfig, filename="generation_config.json", seed_used=None): # MODIFIED
+    """Saves the generation config to a JSON file, optionally including the seed."""
+    config_dict = generation_config.to_dict()
+    if seed_used is not None:
+        config_dict["_note_seed_used_for_run"] = seed_used # Add a note about the global seed
+    with open(filename, "w") as f:
+        json.dump(config_dict, f, indent=4)
 
 script_dir = os.path.dirname(os.path.realpath(__file__))
 config_path = os.path.join(script_dir, "config.yaml")
@@ -35,28 +55,29 @@ if not os.path.exists(config_path):
 with open(config_path, "r") as f:
     cfg = yaml.safe_load(f)
 
+reproducibility_cfg = cfg.get("reproducibility", {})
+CONFIG_SEED_VALUE = reproducibility_cfg.get("seed")
+
 model_list = cfg["models"]
 warm_prompts = cfg["warm_prompts"]
 prompt_list = cfg["prompt_list"]
 
 # --- GenerationConfig Setup ---
-generation_params = {
+# We will now potentially create this per model, after loading the model,
+# to correctly merge with model's defaults if needed.
+# For now, let's define the user's desired base parameters from config.
+user_generation_params = {
     "max_new_tokens": cfg["generation"]["max_new_tokens"],
     "do_sample": cfg["generation"]["do_sample"],
 }
-
-if generation_params["do_sample"]:
+if user_generation_params["do_sample"]:
     if "temperature" in cfg["generation"]:
-        generation_params["temperature"] = cfg["generation"]["temperature"]
+        user_generation_params["temperature"] = cfg["generation"]["temperature"]
     if "top_k" in cfg["generation"]:
-        generation_params["top_k"] = cfg["generation"]["top_k"]
+        user_generation_params["top_k"] = cfg["generation"]["top_k"]
     if "top_p" in cfg["generation"]:
-        generation_params["top_p"] = cfg["generation"]["top_p"]
-else:
-    pass
-
-gen_config = GenerationConfig(**generation_params)
-
+        user_generation_params["top_p"] = cfg["generation"]["top_p"]
+# Note: gen_config will be finalized after model loading in run_full_benchmark_mps
 
 num_runs_cfg = cfg["sampling"]["num_runs_per_prompt"]
 rss_interval_cfg = cfg["sampling"]["rss_sampler_interval_seconds"]
@@ -66,11 +87,8 @@ temp_delay_cfg = cfg["sampling"]["temperature_delay_seconds"]
 results_dir_from_config = cfg["output"]["results_directory"]
 base_output_filename_cfg = cfg["output"]["base_output_filename"]
 
-
-# Save generation config (moved path creation inside results dir logic later)
-# save_generation_config(gen_config, os.path.join(script_dir, "results/generation_config.json"))
-
-# --- Sudo Helper Function ---
+# --- Sudo Helper, Powermetrics, other helpers ---
+# ... (These functions remain the same as your previous version) ...
 def ensure_sudo_active(interactive_prompt_timeout=60):
     sudo_check_process = subprocess.run(
         ["sudo", "-nv"], capture_output=True, text=True, timeout=5
@@ -94,7 +112,6 @@ def ensure_sudo_active(interactive_prompt_timeout=60):
             return False
     return False
 
-# --- Helper function to run powermetrics for a short duration and get average power ---
 def get_short_powermetrics_sample_w(duration_s=2, interval_ms=1000, prefix="short_pm_"):
     if not ensure_sudo_active():
         print(f"Warning: Sudo not active for short powermetrics (prefix: {prefix}). Power sample will be skipped.")
@@ -179,7 +196,7 @@ def get_temperature_with_smctemp(param, samples=3, delay=0.1):
             output = subprocess.check_output(command, text=True, stderr=subprocess.DEVNULL)
             readings.append(float(output.strip()))
             time.sleep(delay)
-        return round(sum(readings) / len(readings), 1) if readings else None # MODIFIED: smctemp often gives integer, round to 1 decimal
+        return round(sum(readings) / len(readings), 1) if readings else None
     except FileNotFoundError: print(f"Warning: 'smctemp' command not found for '{param}'. Temp will be null."); return None
     except subprocess.CalledProcessError as e: print(f"Warning: 'smctemp {param}' failed: {e}. Temp will be null."); return None
     except Exception as e: print(f"Warning: Error getting temp '{param}': {e}. Temp will be null."); return None
@@ -187,7 +204,8 @@ def get_temperature_with_smctemp(param, samples=3, delay=0.1):
 def get_gpu_temperature(samples=3, delay=0.1): return get_temperature_with_smctemp("-g", samples, delay)
 def get_cpu_temperature(samples=3, delay=0.1): return get_temperature_with_smctemp("-c", samples, delay)
 
-def benchmark_model_on_prompt_mps(model, tokenizer, prompt, effective_gen_config: GenerationConfig, dtype_str: str):
+# MODIFIED to accept the benchmark_gen_config
+def benchmark_model_on_prompt_mps(model, tokenizer, prompt, benchmark_gen_config: GenerationConfig, dtype_str: str, seed_used: int):
     results = {}
     device_str = "mps"
 
@@ -201,12 +219,29 @@ def benchmark_model_on_prompt_mps(model, tokenizer, prompt, effective_gen_config
 
         ttft_runs_ms = []
         print("Running TTFT measurements...")
-        ttft_gen_config = GenerationConfig(max_new_tokens=1, do_sample=False)
-        for _ in range(num_runs_cfg): # Using num_runs_cfg for TTFT runs as well for consistency
+        # Ensure TTFT is strictly greedy and non-sampling
+        ttft_params = benchmark_gen_config.to_dict()
+        ttft_params.update({
+            "max_new_tokens": 1,
+            "do_sample": False,
+            # Remove sampling parameters if they exist to avoid conflicts/warnings
+            "temperature": None,
+            "top_k": None,
+            "top_p": None,
+            "num_beams": 1 # Explicitly greedy
+        })
+        # Filter out None values before creating GenerationConfig
+        ttft_params_cleaned = {k: v for k, v in ttft_params.items() if v is not None}
+        ttft_gen_config_effective = GenerationConfig(**ttft_params_cleaned)
+
+        # print(f"DEBUG: Effective TTFT GenerationConfig: {ttft_gen_config_effective.to_dict()}") # For debugging
+
+        for _ in range(num_runs_cfg):
             torch.mps.synchronize()
             start_ttft = time.perf_counter()
             with torch.inference_mode():
-                _ = model.generate(generation_config=ttft_gen_config, **inputs)
+                # Pass inputs as keyword arguments
+                _ = model.generate(input_ids=inputs.input_ids, attention_mask=inputs.attention_mask, generation_config=ttft_gen_config_effective)
             torch.mps.synchronize()
             end_ttft = time.perf_counter()
             ttft_runs_ms.append((end_ttft - start_ttft) * 1000)
@@ -225,7 +260,7 @@ def benchmark_model_on_prompt_mps(model, tokenizer, prompt, effective_gen_config
         cpu_temp_before_c = get_cpu_temperature(samples=temp_samples_cfg, delay=temp_delay_cfg)
         gpu_temp_before_c = get_gpu_temperature(samples=temp_samples_cfg, delay=temp_delay_cfg)
 
-        print(f"Running {num_runs_cfg} full generation runs...")
+        # print(f"Running {num_runs_cfg} full generation runs with config: {benchmark_gen_config.to_dict()}...") # Log the config being used
         for i in range(num_runs_cfg):
             print(f"  Run {i+1}/{num_runs_cfg} for prompt '{prompt[:30]}...'")
             pm_proc, temp_pm_file_path, rss_sampler_thread = None, None, None
@@ -247,15 +282,21 @@ def benchmark_model_on_prompt_mps(model, tokenizer, prompt, effective_gen_config
 
                 rss_sampler_thread = start_rss_sampler(process, interval=rss_interval_cfg)
 
+
                 torch.mps.synchronize()
                 start_full_run = time.perf_counter()
                 with torch.inference_mode():
-                    outputs = model.generate(generation_config=effective_gen_config, return_dict_in_generate=True, output_scores=False, **inputs)
+                    outputs = model.generate(
+                        input_ids=inputs.input_ids,
+                        attention_mask=inputs.attention_mask,
+                        generation_config=benchmark_gen_config, # Use the passed, potentially merged, config
+                        return_dict_in_generate=True,
+                        output_scores=False
+                    )
                 torch.mps.synchronize()
                 end_full_run = time.perf_counter()
                 inference_duration_s = end_full_run - start_full_run
-                full_run_times_ms.append(inference_duration_s * 1000) # Will be rounded later
-
+                full_run_times_ms.append(inference_duration_s * 1000)
                 current_mps_alloc_mb, _ = get_mps_usage_mb()
                 if current_mps_alloc_mb > peak_mps_alloc_during_prompt_mb:
                     peak_mps_alloc_during_prompt_mb = current_mps_alloc_mb
@@ -309,7 +350,7 @@ def benchmark_model_on_prompt_mps(model, tokenizer, prompt, effective_gen_config
             except Exception as e_run:
                 print(f"ERROR within MPS benchmark run {i+1} for prompt '{prompt[:30]}...': {e_run}")
                 import traceback; traceback.print_exc()
-                full_run_times_ms.append(None) # Add placeholder if a run fails
+                full_run_times_ms.append(None)
                 energy_consumption_j_runs.append(None)
             finally:
                 if rss_sampler_thread and rss_sampler_thread.get("stop_event") and not rss_sampler_thread["stop_event"].is_set():
@@ -319,6 +360,7 @@ def benchmark_model_on_prompt_mps(model, tokenizer, prompt, effective_gen_config
                     try: os.remove(temp_pm_file_path)
                     except OSError as e_rm: print(f"Warning: Could not remove temp powermetrics file {temp_pm_file_path}: {e_rm}")
 
+        # ... (calculations for avg_time_ms, tokens_per_sec, energy, temps as before) ...
         rss_after_all_runs_mb = get_rss_usage_mb()
         mps_alloc_after_all_runs_mb, mps_resv_after_all_runs_mb = get_mps_usage_mb()
         cpu_temp_after_c = get_cpu_temperature(samples=temp_samples_cfg, delay=temp_delay_cfg)
@@ -328,12 +370,11 @@ def benchmark_model_on_prompt_mps(model, tokenizer, prompt, effective_gen_config
         valid_full_run_times_ms = [t for t in full_run_times_ms if t is not None]
         avg_time_ms = round(sum(valid_full_run_times_ms) / len(valid_full_run_times_ms), 3) if valid_full_run_times_ms else 0
         
-        # ADDED: gpu_times_per_run and stddev_gpu_time_ms
         gpu_times_per_run = [round(t, 3) for t in valid_full_run_times_ms] if valid_full_run_times_ms else []
         stddev_gpu_time_ms = None
         if len(gpu_times_per_run) > 1:
             stddev_gpu_time_ms = round(statistics.stdev(gpu_times_per_run), 3)
-        elif len(gpu_times_per_run) == 1: # If only one successful run, stddev is 0 or undefined.
+        elif len(gpu_times_per_run) == 1: 
             stddev_gpu_time_ms = 0.0
 
 
@@ -345,10 +386,9 @@ def benchmark_model_on_prompt_mps(model, tokenizer, prompt, effective_gen_config
         if avg_energy_consumption_j is not None and avg_time_ms > 0:
             avg_power_during_inference_w = round(avg_energy_consumption_j / (avg_time_ms / 1000.0), 2)
 
-        cpu_temp_delta_c = round(cpu_temp_after_c - cpu_temp_before_c, 1) if cpu_temp_before_c is not None and cpu_temp_after_c is not None else None # MODIFIED: round to 1 decimal
-        gpu_temp_delta_c = round(gpu_temp_after_c - gpu_temp_before_c, 1) if gpu_temp_before_c is not None and gpu_temp_after_c is not None else None # MODIFIED: round to 1 decimal
+        cpu_temp_delta_c = round(cpu_temp_after_c - cpu_temp_before_c, 1) if cpu_temp_before_c is not None and cpu_temp_after_c is not None else None
+        gpu_temp_delta_c = round(gpu_temp_after_c - gpu_temp_before_c, 1) if gpu_temp_before_c is not None and gpu_temp_after_c is not None else None
 
-        # ADDED: gpu_temp_avg_c
         gpu_temp_avg_c = None
         if gpu_temp_before_c is not None and gpu_temp_after_c is not None:
             gpu_temp_avg_c = round((gpu_temp_before_c + gpu_temp_after_c) / 2.0, 1)
@@ -361,52 +401,33 @@ def benchmark_model_on_prompt_mps(model, tokenizer, prompt, effective_gen_config
         peak_mps_alloc_during_prompt_mb = round(peak_mps_alloc_during_prompt_mb, 2) if peak_mps_alloc_during_prompt_mb > 0 else None
 
         results = {
-            "prompt": prompt[:100] + "...", "status": "success", "error_message": None,
-            # ADDED/MODIFIED for Llama similarity
+            "prompt": prompt, "status": "success", "error_message": None,
+            "seed_used": seed_used, 
             "batch_size": 1,
             "num_timed_runs_per_prompt": num_runs_cfg,
-            
             "input_tokens": input_tokens, "output_tokens": actual_output_tokens,
             "ttft_ms_avg": ttft_ms_avg,
-            "avg_time_ms": avg_time_ms, # Note: This is total inference time on MPS, akin to avg_gpu_time_ms
-            "stddev_gpu_time_ms": stddev_gpu_time_ms, # ADDED
-            "gpu_times_per_run": gpu_times_per_run, # ADDED
+            "avg_time_ms": avg_time_ms,
+            "stddev_gpu_time_ms": stddev_gpu_time_ms,
+            "runs_gpu_time_ms": gpu_times_per_run,
             "tokens_per_sec": tokens_per_sec,
-            
             "avg_energy_consumption_j": avg_energy_consumption_j,
             "avg_power_during_inference_w": avg_power_during_inference_w,
-            "power_before_w": power_before_prompt_w, # RENAMED
-            "power_after_w": power_after_prompt_w,   # RENAMED
-            
+            "power_before_w": power_before_prompt_w,
+            "power_after_w": power_after_prompt_w,
             "output_text_preview": generated_text_preview,
-
-            "cpu_temp_before_c": cpu_temp_before_c,
-            "cpu_temp_after_c": cpu_temp_after_c,
-            "cpu_temp_increase_c": cpu_temp_delta_c, # RENAMED
-
-            "gpu_temp_before_c": gpu_temp_before_c,
-            "gpu_temp_after_c": gpu_temp_after_c,
-            "gpu_temp_avg_c": gpu_temp_avg_c, # ADDED
-            "gpu_temp_increase_c": gpu_temp_delta_c, # RENAMED
-
-            "mps_alloc_before_mb": round(mps_alloc_before_all_runs_mb, 2),
-            "mps_resv_before_mb": round(mps_resv_before_all_runs_mb, 2),
-            "rss_before_mb": round(rss_before_all_runs_mb, 2), # Host RAM
-            
-            "mps_alloc_after_mb": round(mps_alloc_after_all_runs_mb, 2),
-            "mps_resv_after_mb": round(mps_resv_after_all_runs_mb, 2),
-            "rss_after_mb": round(rss_after_all_runs_mb, 2), # Host RAM
-            
-            "peak_mps_mb": peak_mps_alloc_during_prompt_mb, # MPS allocated memory peak during prompt runs
-            "peak_host_memory_mb": peak_host_mem_during_prompt_mb, # Peak RSS during prompt runs
+            "cpu_temp_before_c": cpu_temp_before_c, "cpu_temp_after_c": cpu_temp_after_c, "cpu_temp_increase_c": cpu_temp_delta_c,
+            "gpu_temp_before_c": gpu_temp_before_c, "gpu_temp_after_c": gpu_temp_after_c, "gpu_temp_avg_c": gpu_temp_avg_c, "gpu_temp_increase_c": gpu_temp_delta_c,
+            "mps_alloc_before_mb": round(mps_alloc_before_all_runs_mb, 2), "mps_resv_before_mb": round(mps_resv_before_all_runs_mb, 2), "rss_before_mb": round(rss_before_all_runs_mb, 2),
+            "mps_alloc_after_mb": round(mps_alloc_after_all_runs_mb, 2), "mps_resv_after_mb": round(mps_resv_after_all_runs_mb, 2), "rss_after_mb": round(rss_after_all_runs_mb, 2),
+            "peak_mps_mb": peak_mps_alloc_during_prompt_mb, "peak_host_memory_mb": peak_host_mem_during_prompt_mb,
         }
 
     except Exception as e_outer:
         print(f"MAJOR ERROR during MPS benchmark for prompt '{prompt[:50]}...': {e_outer}")
         import traceback; traceback.print_exc()
-        results = {"prompt": prompt, "status": "failed", "error_message": str(e_outer)}
+        results = {"prompt": prompt, "status": "failed", "error_message": str(e_outer), "seed_used": seed_used}
     return results
-
 
 def download_model_if_needed(model_id: str, token: str = None):
     print(f"Ensuring model '{model_id}' files are downloaded to cache...")
@@ -428,8 +449,9 @@ def download_model_if_needed(model_id: str, token: str = None):
         import traceback; traceback.print_exc()
         return False
 
-def run_full_benchmark_mps(output_filename_param, abs_results_dir_param): # Added abs_results_dir_param
+def run_full_benchmark_mps(output_filename_param, abs_results_dir_param, effective_seed_to_use): # MODIFIED: pass seed
     if not torch.backends.mps.is_available():
+        # ... (error handling as before) ...
         print("FATAL: MPS backend not available. Please install a compatible PyTorch 2.x build. Exiting MPS benchmark.")
         error_result = [{"status": "mps_unavailable", "error_message": "MPS backend not available."}]
         try:
@@ -445,24 +467,16 @@ def run_full_benchmark_mps(output_filename_param, abs_results_dir_param): # Adde
     else:
         print("Sudo privileges validated for upcoming powermetrics calls (MPS).")
 
-    # Save generation config to the results directory
-    try:
-        gen_config_filename = os.path.join(abs_results_dir_param, "generation_config_mps_benchmark.json")
-        save_generation_config(gen_config, gen_config_filename)
-        print(f"Effective GenerationConfig saved to {gen_config_filename}")
-    except Exception as e_gen_conf:
-        print(f"Warning: Could not save effective GenerationConfig: {e_gen_conf}")
-
-
     all_prompt_results = []
     device_str = "mps"
     benchmark_dtype = torch.float16
     benchmark_dtype_str = str(benchmark_dtype)
 
-    print(f"--- Running MPS Benchmark on device: {device_str} with dtype: {benchmark_dtype_str} ---")
+    print(f"--- Running MPS Benchmark on device: {device_str} with dtype: {benchmark_dtype_str} using SEED: {effective_seed_to_use} ---") # MODIFIED
     print(f"--- Output will be saved to: {output_filename_param} ---")
 
     hf_token_from_config = cfg.get("huggingface_token")
+    # ... (HF login as before) ...
     try:
         if hf_token_from_config and hf_token_from_config.strip():
             login(token=hf_token_from_config); print("Logged in to Hugging Face Hub (token from config).")
@@ -471,18 +485,21 @@ def run_full_benchmark_mps(output_filename_param, abs_results_dir_param): # Adde
             else: print("No HF token in config or system. Proceeding with anonymous access.")
     except Exception as e_login: print(f"Warning: HF login/token check failed: {e_login}")
 
+
     for model_id_for_mps in model_list:
         print(f"\n{'='*20} Preparing MPS Model: {model_id_for_mps} {'='*20}")
 
         download_successful = download_model_if_needed(model_id_for_mps, token=hf_token_from_config)
         if not download_successful:
+            # ... (download fail logic as before, add seed_used) ...
             print(f"Skipping MPS benchmark for model {model_id_for_mps} due to download failure.")
             all_prompt_results.append({
                 "model_id": model_id_for_mps, "status": "download_failed",
                 "error_message": f"Failed to download/cache model files for {model_id_for_mps}.",
-                "accelerator_used": device_str.upper(), # MODIFIED
-                "benchmark_dtype": benchmark_dtype_str, # MODIFIED
-                "quantization_method": "None", # ADDED
+                "accelerator_used": device_str.upper(), 
+                "benchmark_dtype": benchmark_dtype_str, 
+                "quantization_method": "None",
+                "seed_used": effective_seed_to_use, # ADDED
             })
             try:
                 with open(output_filename_param, "w") as f: json.dump(all_prompt_results, f, indent=4)
@@ -491,12 +508,15 @@ def run_full_benchmark_mps(output_filename_param, abs_results_dir_param): # Adde
 
         print(f"\n{'='*10} Benchmarking MPS Model (from cache): {model_id_for_mps} {'='*10}")
         model_mps, tokenizer_mps = None, None
-        model_load_time_cpu_s, model_move_to_device_time_s = 0.0, None # MODIFIED: init move time to None
-        rss_after_cpu_load_mb, rss_after_device_move_mb = None, None # MODIFIED: init to None
+        model_load_time_cpu_s, model_move_to_device_time_s = 0.0, None
+        rss_after_cpu_load_mb, rss_after_device_move_mb = None, None
+        
+        # --- Effective Generation Config Per Model ---
+        effective_benchmark_gen_config = None
 
         try:
+            # ... (tokenizer and model loading as before) ...
             print(f"Loading tokenizer {model_id_for_mps} to CPU (from cache)...")
-            # Time tokenizer and model load to CPU separately from model move to device
             cpu_load_start_time = time.perf_counter()
             tokenizer_mps = AutoTokenizer.from_pretrained(model_id_for_mps, use_fast=True, local_files_only=True)
             print(f"Loading model {model_id_for_mps} to CPU (dtype={benchmark_dtype_str}) (from cache)...")
@@ -504,6 +524,36 @@ def run_full_benchmark_mps(output_filename_param, abs_results_dir_param): # Adde
             model_load_time_cpu_s = time.perf_counter() - cpu_load_start_time
             rss_after_cpu_load_mb = get_rss_usage_mb()
             print(f"Model '{model_id_for_mps}' + Tokenizer CPU load (from cache): {model_load_time_cpu_s:.3f}s. RSS after CPU load: {rss_after_cpu_load_mb:.2f} MB")
+
+            # --- Create/Merge GenerationConfig AFTER model is loaded ---
+            model_default_gen_config_dict = model_mps.generation_config.to_dict()
+            # print(f"DEBUG: Model's default GenerationConfig for {model_id_for_mps}: {model_default_gen_config_dict}")
+
+            # Start with model's defaults, then apply user's config from YAML
+            merged_gen_params = model_default_gen_config_dict.copy()
+            merged_gen_params.update(user_generation_params) # user_generation_params defined near the top
+
+            # If user explicitly sets do_sample=False, ensure no sampling params are carried over
+            # or set to defaults that might enable sampling implicitly.
+            if not merged_gen_params.get("do_sample", False): # Check the final do_sample state
+                merged_gen_params["do_sample"] = False # Explicitly set
+                merged_gen_params.pop("temperature", None)
+                merged_gen_params.pop("top_k", None)
+                merged_gen_params.pop("top_p", None)
+                merged_gen_params["num_beams"] = merged_gen_params.get("num_beams", 1) # Ensure greedy if not specified
+
+            effective_benchmark_gen_config = GenerationConfig(**merged_gen_params)
+            print(f"INFO: Effective GenerationConfig for {model_id_for_mps} (model defaults + user config): {effective_benchmark_gen_config.to_dict()}")
+
+            # Save the effective generation config for this model run
+            try:
+                gen_config_filename = os.path.join(abs_results_dir_param, f"generation_config_{model_id_for_mps.replace('/', '_')}_{timestamp}.json")
+                save_generation_config(effective_benchmark_gen_config, gen_config_filename, seed_used=effective_seed_to_use)
+                print(f"Effective GenerationConfig for this model saved to {gen_config_filename}")
+            except Exception as e_gen_conf_save:
+                print(f"Warning: Could not save effective GenerationConfig for {model_id_for_mps}: {e_gen_conf_save}")
+            # --- End of GenerationConfig finalization ---
+
 
             torch.mps.synchronize()
             move_start_time = time.perf_counter()
@@ -516,38 +566,39 @@ def run_full_benchmark_mps(output_filename_param, abs_results_dir_param): # Adde
             rss_after_device_move_mb = get_rss_usage_mb()
             print(f"Model '{model_id_for_mps}' move to {device_str}: {model_move_to_device_time_s:.3f}s. RSS after device move: {rss_after_device_move_mb:.2f} MB")
 
-            # Calculate combined load time
             total_model_load_time_s = model_load_time_cpu_s + (model_move_to_device_time_s if model_move_to_device_time_s is not None else 0.0)
 
             print("Global MPS warm-up for the model...")
+            # For warm-up, use a very simple, non-sampling config
+            warmup_gen_config = GenerationConfig(max_new_tokens=16, do_sample=False)
             for w_prompt_idx, w_prompt_text in enumerate(warm_prompts):
                 w_inputs = tokenizer_mps(w_prompt_text, return_tensors="pt").to(device_str)
                 torch.mps.synchronize()
                 with torch.inference_mode():
-                    _ = model_mps.generate(**w_inputs, max_new_tokens=16, do_sample=False)
+                    _ = model_mps.generate(input_ids=w_inputs.input_ids, attention_mask=w_inputs.attention_mask, generation_config=warmup_gen_config)
                 torch.mps.synchronize()
             print("Global MPS warm-up complete.")
 
             for current_prompt_text in prompt_list:
                 print(f"--- MPS Prompt: '{current_prompt_text[:50]}...' ---")
                 single_prompt_run_results = benchmark_model_on_prompt_mps(
-                    model_mps, tokenizer_mps, current_prompt_text, gen_config, benchmark_dtype_str
+                    model_mps, tokenizer_mps, current_prompt_text,
+                    effective_benchmark_gen_config, # Pass the finalized config
+                    benchmark_dtype_str,
+                    effective_seed_to_use # Pass the seed
                 )
-                # Update with model-level and setup-level info
                 single_prompt_run_results.update({
                     "model_id": model_id_for_mps,
-                    "accelerator_used": device_str.upper(), # E.g., "MPS"
-                    "benchmark_dtype": benchmark_dtype_str, # For Llama similarity
-                    "quantization_method": "None", # ADDED for Llama similarity
-                    "num_global_warmup_runs": len(warm_prompts) if warm_prompts else 0, # ADDED for Llama similarity
-                    
-                    "model_load_time_s": round(total_model_load_time_s, 3), # Combined load time
-                    # Detailed timings (optional to keep, good for MPS specific debugging)
+                    "accelerator_used": device_str.upper(),
+                    "benchmark_dtype": benchmark_dtype_str,
+                    "quantization_method": "None",
+                    "num_global_warmup_runs": len(warm_prompts) if warm_prompts else 0,
+                    "model_load_time_s": round(total_model_load_time_s, 3),
                     "model_load_cpu_s": round(model_load_time_cpu_s, 3),
                     "model_move_to_device_time_s": round(model_move_to_device_time_s, 3) if model_move_to_device_time_s is not None else None,
-                    
-                    "rss_after_load_mb": rss_after_cpu_load_mb, # Changed key for potential Gemma comparison (Host RAM after CPU load)
-                    "rss_after_device_move_mb": rss_after_device_move_mb, # Host RAM after model moved to MPS
+                    "rss_after_load_mb": rss_after_cpu_load_mb,
+                    "rss_after_device_move_mb": rss_after_device_move_mb,
+                    # "seed_used" is already added by benchmark_model_on_prompt_mps
                 })
                 all_prompt_results.append(single_prompt_run_results)
                 try:
@@ -555,35 +606,53 @@ def run_full_benchmark_mps(output_filename_param, abs_results_dir_param): # Adde
                 except Exception as e_write_inc_mps: print(f"ERROR writing MPS results to {output_filename_param} (incremental): {e_write_inc_mps}")
 
         except LocalEntryNotFoundError as e_local_mps:
+            # ... (error handling as before, add seed_used) ...
             print(f"FATAL ERROR for MPS model {model_id_for_mps}: Could not load model from local cache. {e_local_mps}")
             import traceback; traceback.print_exc()
             all_prompt_results.append({
                 "model_id": model_id_for_mps, "status": "load_from_cache_failed",
                 "error_message": str(e_local_mps),
                 "accelerator_used": device_str.upper(), "benchmark_dtype": benchmark_dtype_str, "quantization_method": "None",
+                "seed_used": effective_seed_to_use, # ADDED
             })
         except Exception as e_model_scope_mps:
+            # ... (error handling as before, add seed_used) ...
             print(f"FATAL ERROR during MPS setup/benchmark for {model_id_for_mps}: {e_model_scope_mps}")
             import traceback; traceback.print_exc()
             all_prompt_results.append({
                 "model_id": model_id_for_mps, "status": "load_or_setup_failed",
                 "error_message": str(e_model_scope_mps),
                 "accelerator_used": device_str.upper(), "benchmark_dtype": benchmark_dtype_str, "quantization_method": "None",
+                "seed_used": effective_seed_to_use, # ADDED
             })
         finally:
+            # ... (cleanup as before) ...
             print(f"Cleaning up MPS resources for {model_id_for_mps}...")
-            del model_mps; del tokenizer_mps
-            model_mps, tokenizer_mps = None, None
+            del model_mps; del tokenizer_mps; del effective_benchmark_gen_config
+            model_mps, tokenizer_mps, effective_benchmark_gen_config = None, None, None
             torch.mps.empty_cache(); gc.collect()
             print("MPS Cleanup complete.")
             try:
                 with open(output_filename_param, "w") as f: json.dump(all_prompt_results, f, indent=4)
             except Exception as e_final_write_mps: print(f"ERROR writing MPS results to {output_filename_param} (final for model): {e_final_write_mps}")
 
+
     print(f"\nMPS Benchmark run complete. Results saved to {output_filename_param}")
 
 if __name__ == "__main__":
     print("MPS Benchmark script starting...")
+    
+    seed_to_actually_use = DEFAULT_SEED # Initialize with default
+    if CONFIG_SEED_VALUE is not None:
+        try:
+            seed_to_actually_use = int(CONFIG_SEED_VALUE)
+        except ValueError:
+            print(f"Warning: Invalid seed value '{CONFIG_SEED_VALUE}' in config. Using default seed {DEFAULT_SEED}.")
+    else:
+        print(f"Info: No seed specified in config. Using default seed {DEFAULT_SEED} for reproducibility.")
+    set_seed(seed_to_actually_use) # Call set_seed, which also updates CURRENT_SEED_USED
+
+    # ... (rest of __main__ setup: timestamp, dirs, MPS check, permissions) ...
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     abs_results_dir = results_dir_from_config
     if not os.path.isabs(results_dir_from_config):
@@ -593,7 +662,7 @@ if __name__ == "__main__":
         print("FATAL: MPS backend not available. Please install a compatible PyTorch 2.x build. Exiting.")
         os.makedirs(abs_results_dir, exist_ok=True)
         output_file_mps_error = os.path.join(abs_results_dir, f"{base_output_filename_cfg}_{timestamp}_MPS_UNAVAILABLE.json")
-        error_data = [{"model_id": "N/A", "status": "mps_unavailable", "error_message": "MPS backend not available."}]
+        error_data = [{"model_id": "N/A", "status": "mps_unavailable", "error_message": "MPS backend not available.", "seed_used": seed_to_actually_use}]
         try:
             with open(output_file_mps_error, "w") as f: json.dump(error_data, f, indent=4)
             print(f"MPS unavailability status saved to {output_file_mps_error}")
@@ -620,4 +689,8 @@ if __name__ == "__main__":
     if os.geteuid() != 0:
         print("Script not running as root. Sudo will be used for powermetrics (MPS).")
 
-    run_full_benchmark_mps(output_filename_param=output_file_mps, abs_results_dir_param=abs_results_dir) # Pass abs_results_dir
+    run_full_benchmark_mps(
+        output_filename_param=output_file_mps,
+        abs_results_dir_param=abs_results_dir,
+        effective_seed_to_use=CURRENT_SEED_USED # Pass the globally set seed
+    )
