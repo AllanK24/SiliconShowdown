@@ -4,3 +4,4 @@ transformers >= 4.51.3
 psutil >= 5.9.0
 pyyaml >= 6.0.1
 mlx-lm >= 0.24.1
+hf_xet >= 1.1.3

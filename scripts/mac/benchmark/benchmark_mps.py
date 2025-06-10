@@ -564,7 +564,7 @@ def run_full_benchmark_mps(output_filename_param, abs_results_dir_param, effecti
             
             # MODIFIED: Directly set the model's generation_config
             model_mps.generation_config = final_benchmark_gen_config
-            print(f"INFO: Effective GenerationConfig SET ON MODEL for {model_id_for_mps}: {model_mps.generation_config.to_dict()}")
+            # print(f"INFO: Effective GenerationConfig SET ON MODEL for {model_id_for_mps}: {model_mps.generation_config.to_dict()}")
 
             try:
                 gen_config_filename = os.path.join(abs_results_dir_param, f"generation_config_{model_id_for_mps.replace('/', '_')}_{timestamp}.json")
