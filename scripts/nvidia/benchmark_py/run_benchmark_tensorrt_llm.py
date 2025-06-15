@@ -15,9 +15,12 @@ except Exception as e:
     NVML_AVAILABLE = False
     print(f"pynvml initialization failed: {e}. Nvidia GPU temp/power monitoring disabled.")
 
-from huggingface_hub import login
+from huggingface_hub import snapshot_download
+from huggingface_hub.utils import HfHubHTTPError
 from tensorrt_llm import LLM, SamplingParams
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoTokenizer
+
+os.environ["TOKENIZERS_PARALLELISM"] = False
 
 # Load config from YAML
 with open("scripts/nvidia/benchmark_py/config.yaml", "r") as f:
@@ -45,6 +48,9 @@ generation_config = SamplingParams(
 )
 BATCH_SIZE = config["batch_size"]
 
+# ---------- HF Token ----------
+hf_token = config["hf_token"]
+
 # ---------- Set Seeds ----------
 def set_seeds(seed_value):
     random.seed(seed_value)
@@ -53,6 +59,27 @@ def set_seeds(seed_value):
     if torch.cuda.is_available():
         torch.cuda.manual_seed(seed_value)
         torch.cuda.manual_seed_all(seed_value)
+        
+# ---------- Download Model ------------
+def download_model_if_needed(model_id: str, token: str = None):
+    print(f"Ensuring model '{model_id}' files are downloaded to cache...")
+    actual_token_to_use = token if token and token.strip() else None
+    try:
+        snapshot_path = snapshot_download(
+            repo_id=model_id, local_files_only=False,
+            resume_download=True, token=actual_token_to_use,
+        )
+        print(f"Model '{model_id}' files are available in cache: {snapshot_path}")
+        return True
+    except HfHubHTTPError as e:
+        print(f"Error downloading '{model_id}': Hugging Face Hub API error. {e}")
+        if "401" in str(e): print(f"This might be a private model ('{model_id}'). Ensure you are logged in or provide a valid token.")
+        elif "404" in str(e): print(f"Model or revision for '{model_id}' not found on Hugging Face Hub.")
+        return False
+    except Exception as e:
+        print(f"An unexpected error occurred while ensuring model '{model_id}' is downloaded: {e}")
+        import traceback; traceback.print_exc()
+        return False
 
 # ---------- NVML Helpers (Nvidia Specific) ----------
 def get_nvidia_gpu_details(device_id=0):
@@ -217,18 +244,27 @@ def run_full_benchmark_tensorrt_llm(output_filename="benchmark_results_tensorrt_
     benchmark_dtype = getattr(torch, config.get("benchmark_dtype", "float16")) # Recommended dtype
     print(f"--- Running TensorRT-LLM Benchmark with dtype: {benchmark_dtype} ---")
 
-    # --- HF Login ---
-    try:
-        token = os.getenv("HF_TOKEN")
-        if token: login(token=token); print("Logged in.")
-        else: print("HF_TOKEN not set. Ensure models cached/public.")
-    except Exception as e: print(f"Login failed: {e}")
-
     # --- Loop through models ---
     for model_id, hf_model_id in zip(model_list, hf_model_list):
         print(f"\n{'='*20} Benchmarking Model: {model_id} {'='*20}")
         model, model_load_time = None, None
         current_model_params = {} # Store params for this model run
+        
+        # Download model (if needed)
+        download_successful = download_model_if_needed(model_id, token=hf_token)
+        if not download_successful:
+            # ... (download fail logic - UNCHANGED from previous version with dtype) ...
+            all_results.append({
+                "model_id": model_id, "status": "download_failed",
+                "error_message": f"Failed to download/cache model files for {model_id}.",
+                "accelerator_used": device.upper(),
+                "benchmark_dtype": benchmark_dtype,
+                "quantization_method": "None",
+            })
+            try:
+                with open(output_filename, "w") as f: json.dump(all_results, f, indent=4)
+            except Exception as e_write_dl_fail: print(f"ERROR writing to {output_filename} (after MPS download fail): {e_write_dl_fail}")
+            continue
 
         try:
             # --- Load Model & Tokenizer ---
@@ -301,7 +337,7 @@ def run_full_benchmark_tensorrt_llm(output_filename="benchmark_results_tensorrt_
         finally:
             # --- Cleanup ---
             print(f"Cleaning up {model_id}...")
-            del model
+            del model; del tokenizer
             torch.cuda.empty_cache()
             print("Cleanup complete.")
             # Save final results again
