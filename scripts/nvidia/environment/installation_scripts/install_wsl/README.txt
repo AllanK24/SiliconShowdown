@@ -81,8 +81,8 @@ su - benchmark
 
 ---
 
-### 4. Run the setup environment script
+### 4. Install required dependencies for benchmarking
 
-
+.\
 
 ---
