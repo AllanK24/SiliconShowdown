@@ -24,27 +24,31 @@ This guide will walk you through installing WSL, configuring your system, and ru
 
 > If you already have Ubuntu installed in WSL2, you can skip this step.
 
-In the terminal, paste the following command and press Enter:
-
 ```powershell
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-```
-> Choose `A`
-
-Then:
-```powershell
-wsl --install -d Ubuntu-24.04
+wsl --install
 ```
 
-This will:
-
-* Enable WSL
-* Install **Ubuntu** from Microsoft Store
-* Set WSL2 as the default version
+> This will install WSL
 
 ---
 
-### 👤 3. Create a Dedicated Linux User for Benchmarking
+### Restart Computer
+```powershell
+Restart-Computer -Force
+```
+
+### Open PowerShell as administrator again, run the following command to install Ubuntu 24.04:
+```powershell
+wsl --install Ubuntu-24.04
+```
+
+### If you have WSL installed, run:
+``powershell
+wsl --update
+```
+to update WSL
+
+### 👤 3. Create a Dedicated Linux User for Benchmarking (will appear after you installed Ubuntu):
 
 Regardless of whether you already have Ubuntu installed in WSL or are installing it now:
 
@@ -83,6 +87,20 @@ su - benchmark
 
 ### 4. Install required dependencies for benchmarking
 
-.\
+1) Run the following command to allow custom powershell script execution:
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+```
+
+2) Get into a directory with benchmarking files shared to you:
+```powershell
+cd full_path_to_dir
+```
+
+3) Run the script to setup benchmarking environment
+
+```powershell
+.\setup_dev_env_wsl.ps1
+```
 
 ---

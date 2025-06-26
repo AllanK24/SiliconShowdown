@@ -9,7 +9,7 @@ $WSLPass  = "benchmark2025"  # Password to set / verify
 
 Write-Host "`n🖥️  Silicon Showdown WSL bootstrapper`n" -ForegroundColor Cyan
 
-# 1️⃣  Ensure WSL exists ----------------------------------------------------
+# 1. Ensure WSL exists ----------------------------------------------------
 $wslStatus = wsl --status 2>&1
 if ($LASTEXITCODE -ne 0) {
     Write-Host "❌ WSL is *not* installed. Please run 'wsl --install -d $Distro' first." -ForegroundColor Red
@@ -17,31 +17,21 @@ if ($LASTEXITCODE -ne 0) {
 }
 Write-Host "✅ WSL detected – proceeding ..." -ForegroundColor Green
 
-# 2️⃣  Ensure requested distro exists --------------------------------------
+# 2. Ensure requested distro exists --------------------------------------
 $installed = (wsl --list --quiet) -contains $Distro
 if (-not $installed) {
     Write-Host "📥 Installing distro $Distro ..."
-    wsl --install -d $Distro
-    if ($LASTEXITCODE -ne 0) { Write-Host "❌ Failed to install $Distro" -ForegroundColor Red; exit 1 }
+    wsl --install -d $Distro --no-launch # Prevents interactive setup
+    # *** SYNTAX FIX IS HERE ***
+    # This 'if' statement is now a proper block, and the extra brace is removed.
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "❌ Failed to install $Distro" -ForegroundColor Red
+        exit 1
+    }
 }
 
-# 3️⃣  Create / validate benchmarking user ---------------------------------
-Write-Host "👤 Checking user '$WSLUser' inside $Distro ..."
-$idCmd = "id -u $WSLUser >/dev/null 2>&1 && echo exists || echo missing"
-$exists = (wsl -d $Distro -- bash -c $idCmd).Trim()
-if ($exists -eq "missing") {
-    Write-Host "➕ Creating user '$WSLUser' ..."
-    $addUser = @"bash -c "adduser --disabled-password --gecos '' $WSLUser && echo '$WSLUser:$WSLPass' | chpasswd && usermod -aG sudo $WSLUser""@
-    wsl -d $Distro --user root -- $addUser
-    if ($LASTEXITCODE -ne 0) { Write-Host "❌ Failed to create user" -ForegroundColor Red; exit 1 }
-    Write-Host "✅ User created with sudo rights."
-} else {
-    Write-Host "✅ User already present – resetting password just in case ..."
-    wsl -d $Distro --user root -- bash -c "echo '$WSLUser:$WSLPass' | chpasswd"
-}
-
-# 4️⃣  Optimise WSL resource limits ----------------------------------------
-Write-Host "🛠️  Updating .wslconfig (max CPU / RAM, GPU‑offload) ..."
+# 3.  Optimise WSL resource limits ----------------------------------------
+Write-Host "🛠️  Updating .wslconfig (max CPU / RAM)"
 $wslConfigPath = Join-Path $HOME '.wslconfig'
 $ramGB    = [math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB)
 $cpuCount = [Environment]::ProcessorCount
@@ -51,12 +41,16 @@ memory=${ramGB}GB  # use all RAM
 processors=$cpuCount
 swap=0
 "@
-Set-Content -Path $wslConfigPath -Value $wslConfig -Encoding ASCII -Force
+# BEST PRACTICE: Use UTF8 for config files
+Set-Content -Path $wslConfigPath -Value $wslConfig -Encoding UTF8 -Force
 Write-Host "✅ Saved $wslConfigPath"
 
 Write-Host "🔄 Restarting WSL to apply the config ..."
 wsl --shutdown
-Start-Sleep -Seconds 2
+Start-Sleep -Seconds 3
+
+# 4. Main Environment Setup ---------------------------------------------
+Write-Host "`n🛠️  Beginning main environment setup inside WSL. This will take a significant amount of time." -ForegroundColor Cyan
 
 # Define the setup script to be run in WSL
 $SetupScript = @'
@@ -64,19 +58,27 @@ $SetupScript = @'
 
 set -e
 
-sudo apt update && sudo apt upgrade -y
+# --- 1. System Preparation ---
+echo "--- Updating system packages ---"
+# Use DEBIAN_FRONTEND to prevent interactive prompts during upgrades
+export DEBIAN_FRONTEND=noninteractive
+sudo apt-get update -y
+# Use 'upgrade' instead of 'full-upgrade' for safer automation.
+# The interactive 'do-release-upgrade' has been removed as it's unsuitable for scripts.
+sudo apt-get upgrade -y
+
 # Install essential packages (change Python version here)
+echo "--- Installing essential build and dev packages ---"
 sudo apt install -y build-essential cmake git wget curl unzip \
     python3 python3-pip python3-venv libprotobuf-dev protobuf-compiler \
     libgoogle-glog-dev libgflags-dev libssl-dev libyaml-cpp-dev git-lfs libopenmpi-dev \
     zlib1g-dev libncurses5-dev libgdbm-dev libnss3-dev libreadline-dev libffi-dev libbz2-dev libsqlite3-dev liblzma-dev 
 
-### Install git-lfs
-echo "Installing Git LFS..."
+# --- 2. GPU Environment (CUDA & cuDNN) ---
+echo "--- Installing Git LFS ---"
 git lfs install
 
-### CUDA Toolkit Installation
-echo "Installing CUDA Toolkit 12.9 for WSL2..."
+echo "--- Installing CUDA Toolkit for WSL ---"
 
 sudo apt-key del 7fa2af80 || true
 
@@ -171,113 +173,81 @@ git clone https://github.com/NVIDIA/TensorRT-LLM.git
 echo "✅ WSL environment setup complete."
 '@
 
-# Write setup script to a temp file
-$TempScriptPath = "$env:TEMP\wsl_setup.sh"
-$SetupScript | Out-File -Encoding ASCII -FilePath $TempScriptPath
+# --- PowerShell Execution Logic ---
+$TempScriptPath = Join-Path $env:TEMP "wsl_setup.sh"
+$SetupScript | Out-File -FilePath $TempScriptPath -Encoding UTF8
 
 Write-Host "Copying setup script to WSL..."
-wsl -d $Distro -- bash -c "mkdir -p /home/benchmark/setup"
-wsl -d $Distro -- bash -c "rm -f /home/benchmark/setup/setup.sh"
-Get-Content -Path $TempScriptPath -Raw | wsl -d $Distro -- bash -c "cat > /home/benchmark/setup/setup.sh"
-wsl -d $Distro -- bash -c "chmod +x /home/benchmark/setup/setup.sh"
+Get-Content -Path $TempScriptPath -Raw | wsl -d $Distro -u $WSLUser -- bash -c "cat > /tmp/setup.sh"
+wsl -d $Distro -u $WSLUser -- bash -c "chmod +x /tmp/setup.sh"
 
-Write-Host "Running setup inside WSL..."
-wsl -d $Distro --user root -- bash -c "/home/benchmark/setup/setup.sh"
+Write-Host "Running setup script inside WSL as user '$WSLUser'..."
+$WslCommand = "echo '$WSLPass' | sudo -S /tmp/setup.sh"
+wsl -d $Distro -u $WSLUser -- /bin/bash -c "$WslCommand"
 
-# Check venv exists
-$CheckVenv = wsl -d $Distro --user $WSLUser -- bash -c "test -d /home/benchmark/benchmark_env/.venv && echo 'venv_exists'"
-if (-not ($CheckVenv -eq "venv_exists")) {
-    Write-Host "❌ Virtual environment not found. Something went wrong during setup."
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "❌ The WSL setup script failed. Please review the output above for errors." -ForegroundColor Red
     exit 1
-}else {
-    Write-Host "✅ Virtual environment is set up successfully."
 }
+Write-Host "✅ WSL setup script completed." -ForegroundColor Green
 
-# Copy the run_benchmark.py file into WSL
-$BenchmarkScriptLocalPath = ".\run_benchmark.py"  # Change path if needed
-$BenchmarkScriptWSLPath = "/home/benchmark/benchmark_env/run_benchmark.py"
 
-if (Test-Path $BenchmarkScriptLocalPath) {
-    Write-Host "📋 Copying run_benchmark.py into WSL benchmarking folder..."
-    wsl -d $Distro --user $WSLUser -- bash -c "rm -f $BenchmarkScriptWSLPath" # Remove any existing file
-    Get-Content -Path $BenchmarkScriptLocalPath -Raw | wsl -d $Distro --user $WSLUser -- bash -c "cat > $BenchmarkScriptWSLPath"
-    wsl -d $Distro --user $WSLUser -- bash -c "chmod +x $BenchmarkScriptWSLPath" # Make it executable
-    Write-Host "✅ run_benchmark.py copied successfully."
+# 5. Verify setup and copy project files ------------------------------
+$BaseWSLPath = "/home/$WSLUser/benchmark_env"
+
+# Check if venv exists
+$CheckVenv = wsl -d $Distro -u $WSLUser -- bash -c "test -d $BaseWSLPath/.venv && echo 'exists'"
+if ($CheckVenv -ne "exists") {
+    Write-Host "❌ Virtual environment not found at $BaseWSLPath/.venv. Setup failed." -ForegroundColor Red
+    exit 1
 } else {
-    Write-Host "⚠️ Could not find run_benchmark.py in current directory. Skipping copy."
+    Write-Host "✅ Virtual environment verified." -ForegroundColor Green
 }
 
-# Copy run_benchmark_tensorrt_llm.py into WSL
-$TensorRTScriptLocalPath = ".\run_benchmark_tensorrt_llm.py"
-$TensorRTScriptWSLPath = "/home/benchmark/benchmark_env/run_benchmark_tensorrt_llm.py"
-
-if (Test-Path $TensorRTScriptLocalPath) {
-    Write-Host "📋 Copying run_benchmark_tensorrt_llm.py into WSL benchmarking folder..."
-    wsl -d $Distro --user $WSLUser -- bash -c "rm -f $TensorRTScriptWSLPath"
-    Get-Content -Path $TensorRTScriptLocalPath -Raw | wsl -d $Distro --user $WSLUser -- bash -c "cat > $TensorRTScriptWSLPath"
-    wsl -d $Distro --user $WSLUser -- bash -c "chmod +x $TensorRTScriptWSLPath"
-    Write-Host "✅ run_benchmark_tensorrt_llm.py copied successfully."
-} else {
-    Write-Host "⚠️ Could not find run_benchmark_tensorrt_llm.py in current directory. Skipping copy."
+# Function to copy files to WSL to reduce code duplication
+function Copy-FileToWSL {
+    param (
+        [string]$LocalPath,
+        [string]$WslPath,
+        [bool]$Executable = $false
+    )
+    if (Test-Path $LocalPath) {
+        Write-Host "📋 Copying $(Split-Path $LocalPath -Leaf) to WSL..."
+        Get-Content -Path $LocalPath -Raw | wsl -d $Distro -u $WSLUser -- bash -c "cat > $WslPath"
+        if ($Executable) {
+            wsl -d $Distro -u $WSLUser -- bash -c "chmod +x $WslPath"
+        }
+        Write-Host "✅ Copied successfully."
+    } else {
+        Write-Host "⚠️ Could not find $(Split-Path $LocalPath -Leaf). Skipping copy." -ForegroundColor Yellow
+    }
 }
 
-# Copy config.yaml into WSL
-$ConfigYamlLocalPath = ".\config.yaml"
-$ConfigYamlWSLPath = "/home/benchmark/benchmark_env/config.yaml"
+Copy-FileToWSL -LocalPath ".\run_benchmark.py" -WslPath "$BaseWSLPath/run_benchmark.py" -Executable $true
+Copy-FileToWSL -LocalPath ".\run_benchmark_tensorrt_llm.py" -WslPath "$BaseWSLPath/run_benchmark_tensorrt_llm.py" -Executable $true
+Copy-FileToWSL -LocalPath ".\config.yaml" -WslPath "$BaseWSLPath/config.yaml"
+Copy-FileToWSL -LocalPath ".\collect_system_info.py" -WslPath "$BaseWSLPath/collect_system_info.py" -Executable $true
 
-if (Test-Path $ConfigYamlLocalPath) {
-    Write-Host "📋 Copying config.yaml into WSL benchmarking folder..."
-    wsl -d $Distro --user $WSLUser -- bash -c "rm -f $ConfigYamlWSLPath"
-    Get-Content -Path $ConfigYamlLocalPath -Raw | wsl -d $Distro --user $WSLUser -- bash -c "cat > $ConfigYamlWSLPath"
-    Write-Host "✅ config.yaml copied successfully."
-} else {
-    Write-Host "⚠️ Could not find config.yaml in current directory. Skipping copy."
-}
 
-# Copy collect_system_info.py into WSL
-$SystemInfoScriptLocalPath = ".\collect_system_info.py"  # Adjust path if needed
-$SystemInfoScriptWSLPath = "/home/benchmark/benchmark_env/collect_system_info.py"
+# 6. Run info collection and retrieve results -----------------------------
+Write-Host "🚀 Running final system info collection..."
+$SystemInfoScriptWSLPath = "$BaseWSLPath/collect_system_info.py"
+$SystemInfoOutputWSL = "$BaseWSLPath/system_info_nvidia.json"
 
-if (Test-Path $SystemInfoScriptLocalPath) {
-    Write-Host "📋 Copying collect_system_info.py into WSL benchmarking folder..."
-    wsl -d $Distro --user $WSLUser -- bash -c "rm -f $SystemInfoScriptWSLPath"
-    Get-Content -Path $SystemInfoScriptLocalPath -Raw | wsl -d $Distro --user $WSLUser -- bash -c "cat > $SystemInfoScriptWSLPath"
-    wsl -d $Distro --user $WSLUser -- bash -c "chmod +x $SystemInfoScriptWSLPath"
-    Write-Host "✅ collect_system_info.py copied successfully."
-} else {
-    Write-Host "⚠️ Could not find collect_system_info.py. Skipping."
-}
+$WslExecCommand = "source $BaseWSLPath/.venv/bin/activate; python3 $SystemInfoScriptWSLPath"
+wsl -d $Distro -u $WSLUser -- /bin/bash -c "$WslExecCommand"
 
-Write-Host "🚀 Running collect_system_info.py inside WSL..."
-
-# Define WSL command to run the script and write output to known path
-$SystemInfoOutputWSL = "/home/benchmark/benchmark_env/system_info_nvidia.json"
-$SystemInfoOutputWindows = "$env:USERPROFILE\Desktop\system_info_nvidia.json"
-
-wsl -d $Distro --user $WSLUser -- bash -c "
-    source /home/benchmark/benchmark_env/.venv/bin/activate && \
-    python3 /home/benchmark/benchmark_env/collect_system_info.py > /dev/null
-"
-
-# Copy result from WSL to a results/ folder in the current script directory
-$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
-$ResultsDir = Join-Path $ScriptDir "results"
+# Create local 'results' directory and copy the output file
+$ResultsDir = Join-Path (Get-Location) "results"
+New-Item -ItemType Directory -Path $ResultsDir -ErrorAction SilentlyContinue
 $SystemInfoOutputWindows = Join-Path $ResultsDir "system_info_nvidia.json"
 
-# Create results folder if it doesn't exist
-if (-not (Test-Path $ResultsDir)) {
-    New-Item -ItemType Directory -Path $ResultsDir | Out-Null
-}
+wsl -d $Distro -u $WSLUser -- cat $SystemInfoOutputWSL > $SystemInfoOutputWindows
 
-Write-Host "💾 Copying system_info_nvidia.json to $ResultsDir..."
-wsl -d $Distro --user $WSLUser -- bash -c "
-    cat $SystemInfoOutputWSL
-" > $SystemInfoOutputWindows
-
-if (Test-Path $SystemInfoOutputWindows) {
-    Write-Host "✅ system_info_nvidia.json saved to results/ folder."
+if (Test-Path $SystemInfoOutputWindows -and (Get-Item $SystemInfoOutputWindows).Length -gt 0) {
+    Write-Host "✅ System info saved to results\system_info_nvidia.json" -ForegroundColor Green
 } else {
-    Write-Host "❌ Failed to save system_info_nvidia.json. Please check script output."
+    Write-Host "❌ Failed to retrieve system info file from WSL." -ForegroundColor Red
 }
 
-Write-Host "`n🎉 All done! Your WSL environment is ready for benchmarking."
+Write-Host "`n🎉 All done! Your WSL environment is ready for benchmarking." -ForegroundColor Cyan

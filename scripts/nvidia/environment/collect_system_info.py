@@ -4,11 +4,11 @@
 
 import re
 import os
+import sys
+import json
 import psutil
 import platform
 import subprocess
-import sys
-import json
 
 def _windows_safe_cwd() -> str:
     """
