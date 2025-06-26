@@ -41,7 +41,7 @@ memory=${ramGB}GB  # use all RAM
 processors=$cpuCount
 swap=0
 "@
-# BEST PRACTICE: Use UTF8 for config files
+
 Set-Content -Path $wslConfigPath -Value $wslConfig -Encoding UTF8 -Force
 Write-Host "✅ Saved $wslConfigPath"
 
