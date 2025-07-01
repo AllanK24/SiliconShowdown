@@ -128,7 +128,7 @@ wsl --shutdown
 ```
 
 ### 4. Install required dependencies for benchmarking
-
+```bash
 sudo apt update
 sudo apt upgrade
 
@@ -138,9 +138,10 @@ sudo apt install -y build-essential cmake git wget curl unzip \
     zlib1g-dev libncurses5-dev libgdbm-dev libnss3-dev libreadline-dev libffi-dev libbz2-dev libsqlite3-dev liblzma-dev 
 
 git lfs install
+```
 
-### CUDA
-
+#### CUDA
+```bash
 sudo apt-key del 7fa2af80
 
 wget https://developer.download.nvidia.com/compute/cuda/repos/wsl-ubuntu/x86_64/cuda-wsl-ubuntu.pin
@@ -150,8 +151,50 @@ sudo dpkg -i cuda-repo-wsl-ubuntu-12-9-local_12.9.1-1_amd64.deb
 sudo cp /var/cuda-repo-wsl-ubuntu-12-9-local/cuda-*-keyring.gpg /usr/share/keyrings/
 sudo apt-get update
 sudo apt-get -y install cuda-toolkit-12-9
+sudo cp /usr/lib/wsl/lib/nvidia-smi /usr/bin/nvidia-smi
+sudo chmod +x /usr/bin/nvidia-smi
+```
+#### Check if nvidia-smi was installed:
+```bash
+nvidia-smi
+```
+*If successfull, and you can see the info about your GPU, continue with cuDNN installation, else try all the steps to install CUDA again*
 
+#### cuDNN
 
+```bash
 
-### cuDNN
+### If you have Ubuntu 20.04, run the following to install cuDNN
+wget https://developer.download.nvidia.com/compute/cudnn/9.10.1/local_installers/cudnn-local-repo-ubuntu2004-9.10.1_1.0-1_amd64.deb
+sudo dpkg -i cudnn-local-repo-ubuntu2004-9.10.1_1.0-1_amd64.deb
+sudo cp /var/cudnn-local-repo-ubuntu2004-9.10.1/cudnn-*-keyring.gpg /usr/share/keyrings/
+
+### If you have Ubuntu 22.04, run the following to install cuDNN
+wget https://developer.download.nvidia.com/compute/cudnn/9.10.1/local_installers/cudnn-local-repo-ubuntu2204-9.10.1_1.0-1_amd64.deb
+sudo dpkg -i cudnn-local-repo-ubuntu2204-9.10.1_1.0-1_amd64.deb
+sudo cp /var/cudnn-local-repo-ubuntu2204-9.10.1/cudnn-*-keyring.gpg /usr/share/keyrings/
+
+### If you have Ubuntu 24.04, run the following to install cuDNN
+wget https://developer.download.nvidia.com/compute/cudnn/9.10.1/local_installers/cudnn-local-repo-ubuntu2404-9.10.1_1.0-1_amd64.deb
+sudo dpkg -i cudnn-local-repo-ubuntu2404-9.10.1_1.0-1_amd64.deb
+sudo cp /var/cudnn-local-repo-ubuntu2404-9.10.1/cudnn-*-keyring.gpg /usr/share/keyrings/
+
+### Install the cuDNN package
+sudo apt-get update
+sudo apt-get -y install cudnn
+sudo apt-get -y install cudnn-cuda-12
+sudo apt install nvidia-cuda-toolkit
+
+### Verify cuDNN installation
+nvcc --version
+
+### If you see something like this:
+nvcc: NVIDIA (R) Cuda compiler driver
+Copyright (c) 2005-2023 NVIDIA Corporation
+Built on Fri_Jan__6_16:45:21_PST_2023
+Cuda compilation tools, release 12.0, V12.0.140
+Build cuda_12.0.r12.0/compiler.32267302_0
+### it means it was installed successfully.
+```
+
 ---
