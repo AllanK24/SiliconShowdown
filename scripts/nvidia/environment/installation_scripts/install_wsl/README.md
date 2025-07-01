@@ -43,45 +43,10 @@ wsl --install Ubuntu-24.04
 ```
 
 ### If you have WSL installed, run:
-``powershell
+```powershell
 wsl --update
 ```
 to update WSL
-
-### 👤 3. Create a Dedicated Linux User for Benchmarking (will appear after you installed Ubuntu):
-
-Regardless of whether you already have Ubuntu installed in WSL or are installing it now:
-
-#### ➤ You **must** create a new Linux user named:
-
-- **Username:** `benchmark`  
-- **Password:** `benchmark2025`
-
-#### ✅ If You're Launching Ubuntu for the First Time:
-It will prompt you to create a new user — simply enter the values above.
-
-#### 🔁 If Ubuntu is Already Installed:
-Do the following inside your existing Ubuntu shell:
-
-```bash
-sudo adduser benchmark
-```
-
-Then set the password when prompted:
-```
-Enter new UNIX password: benchmark2025
-```
-
-Add this user to `sudo` group:
-
-```bash
-sudo usermod -aG sudo benchmark
-```
-
-Choose the newly created user:
-```bash
-su - benchmark
-```
 
 ---
 
@@ -197,4 +162,23 @@ Build cuda_12.0.r12.0/compiler.32267302_0
 ### it means it was installed successfully.
 ```
 
+#### Download and setup Python:
+```bash
+mkdir -p ~/benchmark_env/python
+cd ~/benchmark_env/python
+
+curl -O https://www.python.org/ftp/python/3.11.0/Python-3.11.0.tgz
+tar -xzf Python-3.11.0.tgz
+cd Python-3.11.0
+
+./configure --enable-optimizations
+make -j$(nproc)
+sudo make altinstall  # installs as python3.11 without overwriting system python
+
+### Check if python is installed
+python3.11 --version
+```
+
 ---
+
+### 5. Setup the environment for development
